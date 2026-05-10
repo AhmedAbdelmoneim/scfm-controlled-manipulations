@@ -57,6 +57,18 @@ create_environment:
 # PROJECT RULES                                                                 #
 #################################################################################
 
+CONFIG ?= configs/example.yaml
+
+## Run interventions on input_h5ad (writes results/manipulations/*.h5ad)
+.PHONY: manipulate
+manipulate:
+	uv run python -m scfm_controlled_manipulations.pipeline manipulate --config $(CONFIG)
+
+## Compute metrics from embeddings under embeddings_root
+.PHONY: analyze
+analyze:
+	uv run python -m scfm_controlled_manipulations.pipeline analyze --config $(CONFIG)
+
 
 
 #################################################################################

@@ -16,6 +16,7 @@ classifiers = [
     
 ]
 dependencies = [
+    "anndata",
     "ipython",
     "jupyterlab",
     "matplotlib",
@@ -23,7 +24,9 @@ dependencies = [
     "numpy",
     "pandas",
     "pip",
+    "pyarrow",
     "python-dotenv",
+    "pyyaml",
     "ruff",
     "scikit-learn",
 ]
