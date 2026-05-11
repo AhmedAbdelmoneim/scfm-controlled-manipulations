@@ -104,7 +104,7 @@ class GeneShuffle(Intervention):
 
     def _read_chromosome_cache(self) -> dict[str, str]:
         if not self.chromosome_cache_path.exists():
-            logger.info("Chromosome cache not found at %s", self.chromosome_cache_path)
+            logger.debug("Chromosome cache not found at %s", self.chromosome_cache_path)
             return {}
 
         cache = pd.read_csv(self.chromosome_cache_path, dtype=str)
@@ -121,7 +121,7 @@ class GeneShuffle(Intervention):
             chromosome = self._normalize_chromosome(row.chromosome)
             if ensembl_id and chromosome:
                 chromosome_map[ensembl_id] = chromosome
-        logger.info(
+        logger.debug(
             "Loaded %d chromosome mappings from %s",
             len(chromosome_map),
             self.chromosome_cache_path,
@@ -129,6 +129,10 @@ class GeneShuffle(Intervention):
         return chromosome_map
 
     def _write_chromosome_cache(self, chromosome_map: dict[str, str]) -> None:
+        if not chromosome_map:
+            logger.warning("Skipping chromosome cache write because no mappings were resolved")
+            return
+
         self.chromosome_cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache = pd.DataFrame(
             sorted(chromosome_map.items()),
@@ -140,6 +144,19 @@ class GeneShuffle(Intervention):
             len(chromosome_map),
             self.chromosome_cache_path,
         )
+
+    def _chromosome_from_record(self, record: dict[str, Any]) -> str | None:
+        chromosome = self._normalize_chromosome(record.get("chromosome"))
+        if chromosome:
+            return chromosome
+
+        genomic_pos = record.get("genomic_pos")
+        if isinstance(genomic_pos, list | tuple):
+            genomic_pos = genomic_pos[0] if genomic_pos else None
+        if isinstance(genomic_pos, dict):
+            return self._normalize_chromosome(genomic_pos.get("chr"))
+
+        return None
 
     def _download_chromosomes(self, ensembl_ids: list[str]) -> dict[str, str]:
         import mygene
@@ -153,7 +170,7 @@ class GeneShuffle(Intervention):
         records = mg.querymany(
             ensembl_ids,
             scopes="ensembl.gene",
-            fields="chromosome",
+            fields="genomic_pos.chr",
             species=self.species,
             as_dataframe=False,
             verbose=False,
@@ -164,7 +181,7 @@ class GeneShuffle(Intervention):
             if record.get("notfound"):
                 continue
             ensembl_id = self._normalize_ensembl_id(record["query"])
-            chromosome = self._normalize_chromosome(record.get("chromosome"))
+            chromosome = self._chromosome_from_record(record)
             if chromosome:
                 chromosome_map[ensembl_id] = chromosome
 
@@ -214,13 +231,17 @@ class GeneShuffle(Intervention):
                 f"using species='{self.species}'. First missing IDs: {preview}"
             )
         if unmapped:
-            logger.info(
+            logger.debug(
                 "Leaving %d unmapped genes fixed during %s shuffle",
                 len(unmapped),
                 self.variant,
             )
 
         return chromosome_labels, ensembl_ids, mapped_mask, unmapped
+
+    def warm_cache(self, adata: ad.AnnData) -> None:
+        if self.variant in ("chromosome", "chromosome_control"):
+            self._chromosome_labels(adata)
 
     def apply(self, adata: ad.AnnData, seed: int | None = None) -> ad.AnnData:
         rng = np.random.default_rng(seed)

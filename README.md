@@ -4,8 +4,8 @@ Evaluating single-cell foundation model representations through controlled cellu
 
 ## Running The Pipeline
 
-The manipulation step reads an input `.h5ad`, applies every configured intervention, and writes
-one manipulated AnnData file per intervention under `results_dir/manipulations`.
+The manipulation step reads an input `.h5ad`, writes embedding-ready inputs under
+`results_dir/manipulations`, and applies every configured intervention.
 
 ```bash
 make manipulate
@@ -59,6 +59,12 @@ entries in `kwargs` before expansion.
 
 Each output stores intervention provenance in `adata.uns["scfm_intervention"][name]`, including the
 seed and operation-specific metadata.
+
+The manipulation directory also includes:
+
+- `reference.h5ad`: the prepared, slimmed reference AnnData from the input dataset.
+- `hvg.txt`: one gene symbol per line for the top `hvg_n_top_genes` highly variable genes. These are
+  computed from the raw input counts with `scanpy.pp.highly_variable_genes(flavor="seurat_v3")`.
 
 The CLI uses Python logging and defaults to `log_level: INFO`. Set `log_level: DEBUG`, `WARNING`,
 or another standard logging level in the config to adjust verbosity.

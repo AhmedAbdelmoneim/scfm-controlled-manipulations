@@ -13,6 +13,7 @@ slim_manipulated_outputs: true
 h5ad_compression: gzip
 gene_name_column: gene_name
 ensembl_id_column: ensembl_id
+hvg_n_top_genes: 2000
 
 interventions:
   - name: gene_shuffle

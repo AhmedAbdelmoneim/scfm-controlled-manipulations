@@ -1739,6 +1739,7 @@ dependencies = [
     { name = "ruff" },
     { name = "scanpy" },
     { name = "scikit-learn" },
+    { name = "scikit-misc" },
 ]
 
 [package.metadata]
@@ -1759,6 +1760,7 @@ requires-dist = [
     { name = "ruff" },
     { name = "scanpy" },
     { name = "scikit-learn" },
+    { name = "scikit-misc", specifier = ">=0.5.2" },
 ]
 
 [[package]]
@@ -1779,6 +1781,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/36/4d/4a67f30778a45d542bbea5db2dbfa1e9e100bf9ba64aefe34215ba9f11f6/scikit_learn-1.8.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ada8121bcb4dac28d930febc791a69f7cb1673c8495e5eee274190b73a4559c1", size = 9103788, upload-time = "2025-12-10T07:07:45.982Z" },
     { url = "https://files.pythonhosted.org/packages/89/3c/45c352094cfa60050bcbb967b1faf246b22e93cb459f2f907b600f2ceda5/scikit_learn-1.8.0-cp311-cp311-win_amd64.whl", hash = "sha256:c57b1b610bd1f40ba43970e11ce62821c2e6569e4d74023db19c6b26f246cb3b", size = 8081706, upload-time = "2025-12-10T07:07:48.111Z" },
     { url = "https://files.pythonhosted.org/packages/3d/46/5416595bb395757f754feb20c3d776553a386b661658fb21b7c814e89efe/scikit_learn-1.8.0-cp311-cp311-win_arm64.whl", hash = "sha256:2838551e011a64e3053ad7618dda9310175f7515f1742fa2d756f7c874c05961", size = 7688451, upload-time = "2025-12-10T07:07:49.873Z" },
+]
+
+[[package]]
+name = "scikit-misc"
+version = "0.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/02/71/d6d2d1710fb56473817b0520212d33874069952dcb417614f6dd24efb51e/scikit_misc-0.5.2.tar.gz", hash = "sha256:49fa30e4051b341edc7422db66a12c0f59d468729285bfe644d10924dc51be0a", size = 298626, upload-time = "2025-11-03T11:56:30.08Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/a2/e6d7cf850cd01a40d9d2ba0f78968cb4c67aab2e502384ea2fd02f71b2f1/scikit_misc-0.5.2-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:ffdf5bbfc9d6fea57506d460461b8cc5108b68cf18b7b2f952301ee0581956de", size = 163041, upload-time = "2025-11-03T11:56:12.436Z" },
+    { url = "https://files.pythonhosted.org/packages/60/c5/bf7b2679594ad1747dad9da2882f365dc8916a60ff16b241820c6bb30c04/scikit_misc-0.5.2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:07308c764bd78ce14ea34db33c88a07e2ef07250eb8ac6a7faf383246926afa9", size = 151644, upload-time = "2025-11-03T11:56:13.574Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/91/9f5611cacc2a7a09f4251051fca0d55c21054faa8b345ec431711816cd3d/scikit_misc-0.5.2-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2981c3207f02308327845baf8a7d06b829cc632cf605af517cc46bb146915aa9", size = 186981, upload-time = "2025-11-03T11:56:14.564Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/c3/35c9fe02ddda3491df25db7356d849038666bedc3ba6ebdb2217ec954045/scikit_misc-0.5.2-cp311-cp311-win_amd64.whl", hash = "sha256:aee708678a3e6a9567cb47e3d50cb802f1dd8add2c823bb66ff9267096c9e72a", size = 152838, upload-time = "2025-11-03T11:56:15.803Z" },
 ]
 
 [[package]]

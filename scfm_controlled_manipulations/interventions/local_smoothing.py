@@ -6,6 +6,7 @@ import anndata as ad
 import numpy as np
 import scanpy as sc
 import scipy.sparse as sp
+from sklearn.neighbors import NearestNeighbors
 
 from scfm_controlled_manipulations.base import Intervention
 
@@ -30,58 +31,49 @@ class LocalSmoothing(Intervention):
         sc.pp.log1p(normalized)
         return normalized
 
-    @staticmethod
-    def _row_normalize_graph(graph: sp.spmatrix) -> sp.csr_matrix:
-        graph = graph.tocsr()
-        row_sums = np.asarray(graph.sum(axis=1)).ravel()
-        row_scale = np.divide(
-            1.0,
-            row_sums,
-            out=np.zeros_like(row_sums, dtype=np.float64),
-            where=row_sums > 0,
-        )
-        return graph.multiply(row_scale[:, None]).tocsr()
-
     def apply(self, adata: ad.AnnData, seed: int | None = None) -> ad.AnnData:
         if adata.n_obs < 2 or adata.n_vars < 2:
             raise ValueError("local_smoothing requires at least 2 observations and 2 variables")
 
-        # PCA on log-normalized data just for neighbour finding
+        # Clamp k and n_pcs to dataset size
         k = min(self.k, adata.n_obs)
         n_components = min(self.n_pcs, adata.n_obs - 1, adata.n_vars - 1)
-        normalized = self._log_normalize(adata)
-
         n = adata.n_obs
-        logger.info(
+
+        logger.debug(
             "Running local smoothing with k=%d n_pcs=%d on %d cells",
             k,
             n_components,
             n,
         )
+
+        # PCA on log-normalized data, used only for neighbour finding
+        normalized = self._log_normalize(adata)
         sc.pp.pca(normalized, n_comps=n_components, random_state=seed, svd_solver="arpack")
-        sc.pp.neighbors(
-            normalized,
-            n_neighbors=k,
-            n_pcs=n_components,
-            random_state=seed,
-            key_added=self.name,
-        )
+        pcs = normalized.obsm["X_pca"]
 
-        # Scanpy connectivities are weighted; include self counts, then row-normalize for smoothing.
-        connectivities = normalized.obsp[f"{self.name}_connectivities"]
-        S = self._row_normalize_graph(connectivities + sp.eye(n, format="csr"))
+        # Uniform-weight kNN graph in PCA space.
+        # n_neighbors=k includes the cell itself as its own nearest neighbor,
+        # so each row averages over self + (k-1) neighbors with weight 1/k.
+        nn = NearestNeighbors(n_neighbors=k).fit(pcs)
+        _, knn_idx = nn.kneighbors(pcs)
 
-        # Apply S to RAW counts (not log-normalized)
-        # Counts get averaged across neighbours
+        rows = np.repeat(np.arange(n), k)
+        cols = knn_idx.flatten()
+        data = np.full(n * k, 1.0 / k)
+        S = sp.csr_matrix((data, (rows, cols)), shape=(n, n))
+
+        # Apply S to RAW counts (not log-normalized).
+        # Counts get averaged uniformly across the kNN neighborhood.
         X_raw = adata.X if sp.issparse(adata.X) else sp.csr_matrix(adata.X)
         smoothed_counts = (S @ X_raw).toarray()
         # Round to non-negative integers
         smoothed_counts = np.rint(np.clip(smoothed_counts, 0, None)).astype(np.int32)
-        logger.info("Finished local smoothing")
+        logger.debug("Finished local smoothing")
 
         out = adata.copy()
         out.X = sp.csr_matrix(smoothed_counts)
-        # Save operator for the equivariance metric (sidecar file pattern)
+        # Save operator in .uns for the equivariance metric
         out.uns["scfm_intervention"] = {
             self.name: {
                 "k": k,

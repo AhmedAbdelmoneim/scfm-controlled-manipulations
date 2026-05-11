@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import gc
 from itertools import product
 import json
 import logging
@@ -35,6 +36,8 @@ def _configure_logging(level: str = "INFO") -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s [%(processName)s] %(name)s: %(message)s",
     )
+    for dependency_logger in ("httpx", "httpcore", "biothings", "biothings.client", "mygene"):
+        logging.getLogger(dependency_logger).setLevel(logging.WARNING)
 
 
 def _load_config(path: str | Path) -> dict[str, Any]:
@@ -190,6 +193,7 @@ def _output_options(config: Mapping[str, Any]) -> dict[str, Any]:
         "h5ad_compression": config.get("h5ad_compression", "gzip"),
         "gene_name_column": config.get("gene_name_column", "gene_name"),
         "ensembl_id_column": config.get("ensembl_id_column", "ensembl_id"),
+        "hvg_n_top_genes": config.get("hvg_n_top_genes", 2000),
         "overwrite": config.get("overwrite_manipulations", True),
         "log_level": config.get("log_level", "INFO"),
     }
@@ -202,50 +206,126 @@ def _write_h5ad(adata: ad.AnnData, path: Path, compression: str | None) -> None:
         adata.write_h5ad(path)
 
 
+def _format_spec(spec: Mapping[str, Any]) -> str:
+    return f"{spec['name']} {dict(spec.get('kwargs') or {})}"
+
+
+def _write_reference_h5ad(
+    adata_in: ad.AnnData,
+    manip_dir: Path,
+    output_options: Mapping[str, Any],
+) -> None:
+    out_path = manip_dir / "reference.h5ad"
+    if out_path.exists() and not output_options.get("overwrite", True):
+        logger.info("Skipping existing reference.h5ad at %s", out_path)
+        return
+
+    reference = adata_in.copy()
+    prepare_manipulated_adata(reference, output_options)
+    reference.uns["scfm_reference"] = {"source": "input_h5ad"}
+    _write_h5ad(reference, out_path, output_options.get("h5ad_compression"))
+    logger.info("Wrote reference h5ad to %s", out_path)
+
+
+def _write_hvg_file(
+    adata_in: ad.AnnData,
+    manip_dir: Path,
+    output_options: Mapping[str, Any],
+) -> None:
+    out_path = manip_dir / "hvg.txt"
+    if out_path.exists() and not output_options.get("overwrite", True):
+        logger.info("Skipping existing hvg.txt at %s", out_path)
+        return
+
+    gene_name_column = str(output_options.get("gene_name_column", "gene_name"))
+    n_top_genes = min(int(output_options.get("hvg_n_top_genes", 2000)), adata_in.n_vars)
+    if n_top_genes < 1:
+        raise ValueError("Cannot compute HVGs for an AnnData object with zero genes")
+
+    hvg_adata = ad.AnnData(
+        X=adata_in.X,
+        var=adata_in.var[[gene_name_column]].copy(),
+    )
+    sc.pp.highly_variable_genes(
+        hvg_adata,
+        flavor="seurat_v3",
+        n_top_genes=n_top_genes,
+        inplace=True,
+    )
+
+    hvg_var = hvg_adata.var[hvg_adata.var["highly_variable"]].copy()
+    if "highly_variable_rank" in hvg_var:
+        hvg_var = hvg_var.sort_values("highly_variable_rank")
+    gene_names = hvg_var[gene_name_column].astype(str).tolist()
+    out_path.write_text("\n".join(gene_names) + "\n", encoding="utf-8")
+    logger.info("Wrote %d seurat_v3 HVGs to %s", len(gene_names), out_path)
+
+
+def _write_embedding_inputs(
+    adata_in: ad.AnnData,
+    manip_dir: Path,
+    output_options: Mapping[str, Any],
+) -> None:
+    _write_reference_h5ad(adata_in, manip_dir, output_options)
+    _write_hvg_file(adata_in, manip_dir, output_options)
+
+
 def _apply_and_write_manipulation(
     adata_in: ad.AnnData,
     results_dir: Path,
     spec: Mapping[str, Any],
     seed: int | None,
     output_options: Mapping[str, Any],
-) -> str:
+) -> dict[str, Any]:
     name = str(spec["name"])
     kwargs = dict(spec.get("kwargs") or {})
     iid = intervention_id(name, kwargs)
     out_path = manipulation_path(results_dir, iid)
     if out_path.exists() and not output_options.get("overwrite", True):
-        logger.info("Skipping existing manipulation %s at %s", iid, out_path)
-        return iid
+        logger.debug("Skipping existing manipulation %s at %s", iid, out_path)
+        return {
+            "intervention_id": iid,
+            "name": name,
+            "kwargs": kwargs,
+            "path": str(out_path),
+            "status": "skipped",
+        }
 
-    logger.info("Applying intervention %s kwargs=%s", name, kwargs)
+    logger.debug("Applying intervention %s kwargs=%s", name, kwargs)
     cls = interventions.REGISTRY[name]
     intervention = cls(**kwargs)
     out = intervention.apply(adata_in, seed=seed)
     prepare_manipulated_adata(out, output_options)
     _write_h5ad(out, out_path, output_options.get("h5ad_compression"))
-    logger.info("Wrote manipulation %s to %s", iid, out_path)
-    return iid
+    logger.debug("Wrote manipulation %s to %s", iid, out_path)
+    return {
+        "intervention_id": iid,
+        "name": name,
+        "kwargs": kwargs,
+        "path": str(out_path),
+        "status": "written",
+    }
 
 
 def _init_worker_adata(input_path: str, options: Mapping[str, Any]) -> None:
     global _WORKER_ADATA
 
     _configure_logging(str(options.get("log_level", "INFO")))
-    logger.info("Worker loading input AnnData from %s", input_path)
+    logger.debug("Worker loading input AnnData from %s", input_path)
     _WORKER_ADATA = ad.read_h5ad(input_path)
     ensure_gene_metadata(
         _WORKER_ADATA,
         gene_name_column=str(options.get("gene_name_column", "gene_name")),
         ensembl_id_column=str(options.get("ensembl_id_column", "ensembl_id")),
     )
-    logger.info(
+    logger.debug(
         "Worker loaded input AnnData with %d cells and %d genes",
         _WORKER_ADATA.n_obs,
         _WORKER_ADATA.n_vars,
     )
 
 
-def _apply_and_write_manipulation_worker(task: Mapping[str, Any]) -> str:
+def _apply_and_write_manipulation_worker(task: Mapping[str, Any]) -> dict[str, Any]:
     if _WORKER_ADATA is None:
         raise RuntimeError("Worker AnnData was not initialized")
 
@@ -256,6 +336,38 @@ def _apply_and_write_manipulation_worker(task: Mapping[str, Any]) -> str:
         task["seed"],
         task["output_options"],
     )
+
+
+def _log_manipulation_progress(done: int, total: int, result: Mapping[str, Any]) -> None:
+    logger.info(
+        "Completed %d/%d: %s %s %s -> %s",
+        done,
+        total,
+        result["status"],
+        result["intervention_id"],
+        _format_spec({"name": result["name"], "kwargs": result["kwargs"]}),
+        result["path"],
+    )
+
+
+def _prewarm_intervention_caches(
+    adata_in: ad.AnnData,
+    specs: Sequence[Mapping[str, Any]],
+    output_options: Mapping[str, Any],
+) -> None:
+    cache_warmers = []
+    for spec in specs:
+        cls = interventions.REGISTRY[str(spec["name"])]
+        intervention = cls(**dict(spec.get("kwargs") or {}))
+        if hasattr(intervention, "warm_cache"):
+            cache_warmers.append(intervention)
+
+    if not cache_warmers:
+        return
+
+    logger.info("Prewarming caches for %d chromosome-aware variants", len(cache_warmers))
+    for intervention in cache_warmers:
+        intervention.warm_cache(adata_in)
 
 
 def run_manipulate(config: dict[str, Any]) -> None:
@@ -271,11 +383,14 @@ def run_manipulate(config: dict[str, Any]) -> None:
     manip_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Starting manipulation run: input=%s results_dir=%s variants=%d workers=%d",
-        input_path,
-        results_dir,
+        "Starting manipulation run: %d total variants with %d workers",
         len(specs),
         workers,
+    )
+    logger.info(
+        "Input=%s results_dir=%s",
+        input_path,
+        results_dir,
     )
     if workers == 1:
         logger.info("Loading input AnnData from %s", input_path)
@@ -288,12 +403,30 @@ def run_manipulate(config: dict[str, Any]) -> None:
         logger.info(
             "Loaded input AnnData with %d cells and %d genes", adata_in.n_obs, adata_in.n_vars
         )
-        for spec in specs:
-            _apply_and_write_manipulation(adata_in, results_dir, spec, seed, output_options)
-        logger.info("Finished manipulation run")
+        _write_embedding_inputs(adata_in, manip_dir, output_options)
+        for index, spec in enumerate(specs, start=1):
+            result = _apply_and_write_manipulation(
+                adata_in, results_dir, spec, seed, output_options
+            )
+            _log_manipulation_progress(index, len(specs), result)
+        logger.info("Finished manipulation run: %d/%d variants complete", len(specs), len(specs))
         return
 
     logger.info("Launching %d manipulation workers", workers)
+    logger.info("Loading input AnnData from %s for reference/HVG/cache preparation", input_path)
+    adata_in = ad.read_h5ad(input_path)
+    try:
+        ensure_gene_metadata(
+            adata_in,
+            gene_name_column=str(output_options["gene_name_column"]),
+            ensembl_id_column=str(output_options["ensembl_id_column"]),
+        )
+        _write_embedding_inputs(adata_in, manip_dir, output_options)
+        _prewarm_intervention_caches(adata_in, specs, output_options)
+    finally:
+        del adata_in
+        gc.collect()
+
     tasks = [
         {
             "results_dir": str(results_dir),
@@ -310,9 +443,10 @@ def run_manipulate(config: dict[str, Any]) -> None:
         initargs=(str(input_path), output_options),
     ) as executor:
         futures = [executor.submit(_apply_and_write_manipulation_worker, task) for task in tasks]
-        for future in as_completed(futures):
-            future.result()
-    logger.info("Finished manipulation run")
+        for done, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            _log_manipulation_progress(done, len(specs), result)
+    logger.info("Finished manipulation run: %d/%d variants complete", len(specs), len(specs))
 
 
 def _reference_intervention_id(config: dict[str, Any]) -> str:
