@@ -57,7 +57,7 @@ create_environment:
 # PROJECT RULES                                                                 #
 #################################################################################
 
-CONFIG ?= configs/example.yaml
+CONFIG ?= configs/default.yaml
 
 ## Run interventions on input_h5ad (writes results/manipulations/*.h5ad)
 .PHONY: manipulate

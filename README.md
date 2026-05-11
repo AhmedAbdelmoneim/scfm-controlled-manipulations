@@ -8,7 +8,7 @@ The manipulation step reads an input `.h5ad`, applies every configured intervent
 one manipulated AnnData file per intervention under `results_dir/manipulations`.
 
 ```bash
-python -m scfm_controlled_manipulations.pipeline manipulate --config configs/example.yaml
+make manipulate
 ```
 
 The analysis step expects one embedding `.h5ad` per model and intervention ID under
@@ -16,7 +16,14 @@ The analysis step expects one embedding `.h5ad` per model and intervention ID un
 tables under `results_dir/metrics`.
 
 ```bash
-python -m scfm_controlled_manipulations.pipeline analyze --config configs/example.yaml
+make analyze
+```
+
+Both targets use `configs/default.yaml` by default. To run a different config:
+
+```bash
+make manipulate CONFIG=configs/my-run.yaml
+make analyze CONFIG=configs/my-run.yaml
 ```
 
 Interventions are configured as YAML entries with a registry `name` and optional `kwargs`:
@@ -32,8 +39,44 @@ interventions:
       fraction: 0.5
 ```
 
+List-valued kwargs are expanded as Cartesian sweeps. This example writes one manipulation for each
+gene-shuffle variant and one local-smoothing manipulation for each `k` value:
+
+```yaml
+interventions:
+  - name: gene_shuffle
+    kwargs:
+      variant: [random, stratified, chromosome, chromosome_control]
+      n_strata: 10
+  - name: local_smoothing
+    kwargs:
+      k: [5, 10, 20, 50, 100]
+      n_pcs: 50
+```
+
+You can also place sweep-only parameters under `sweep`; values in `sweep` override same-named
+entries in `kwargs` before expansion.
+
 Each output stores intervention provenance in `adata.uns["scfm_intervention"][name]`, including the
 seed and operation-specific metadata.
+
+If `manipulation_workers` is omitted, manipulations run sequentially. Set it to a bounded value to
+process multiple variants in parallel; each worker loads one copy of the input AnnData, so choose
+this based on available memory.
+
+Before each manipulated `.h5ad` is saved, the pipeline refreshes count-derived metadata with
+`scanpy.pp.calculate_qc_metrics(..., percent_top=None)`. This updates standard Scanpy QC columns
+such as `total_counts` and `n_genes_by_counts`, and also writes compatibility aliases `n_counts`
+and `n_genes`.
+
+The pipeline also ensures every saved file has `adata.var["gene_name"]` and
+`adata.var["ensembl_id"]`. It uses common aliases when present, falls back to `var_names` for
+`gene_name`, and uses `var_names` for `ensembl_id` only when they look like Ensembl gene IDs.
+
+By default, manipulated outputs are slimmed before writing: `layers`, `obsm`, `varm`, `obsp`,
+`varp`, `raw`, and unrelated `uns` entries are removed while preserving intervention provenance.
+`h5ad_compression` controls file compression, and `overwrite_manipulations: false` skips variants
+whose output files already exist.
 
 ## Interventions
 
