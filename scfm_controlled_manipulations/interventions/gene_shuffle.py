@@ -234,7 +234,7 @@ class GeneShuffle(Intervention):
 
         out = adata.copy()
         # Keep X fixed and shuffle gene annotations so models see counts under perturbed gene IDs.
-        out.var = adata.var.iloc[perm].copy()
+        out.var = adata.var.take(perm).copy()
         out.uns["scfm_intervention"] = {
             self.name: {
                 "variant": self.variant,
