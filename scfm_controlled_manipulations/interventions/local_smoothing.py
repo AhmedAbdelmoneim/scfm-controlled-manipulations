@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 import anndata as ad
 import numpy as np
 import scanpy as sc
 import scipy.sparse as sp
 
 from scfm_controlled_manipulations.base import Intervention
+
+logger = logging.getLogger(__name__)
 
 
 class LocalSmoothing(Intervention):
@@ -48,6 +52,12 @@ class LocalSmoothing(Intervention):
         normalized = self._log_normalize(adata)
 
         n = adata.n_obs
+        logger.info(
+            "Running local smoothing with k=%d n_pcs=%d on %d cells",
+            k,
+            n_components,
+            n,
+        )
         sc.pp.pca(normalized, n_comps=n_components, random_state=seed, svd_solver="arpack")
         sc.pp.neighbors(
             normalized,
@@ -67,6 +77,7 @@ class LocalSmoothing(Intervention):
         smoothed_counts = (S @ X_raw).toarray()
         # Round to non-negative integers
         smoothed_counts = np.rint(np.clip(smoothed_counts, 0, None)).astype(np.int32)
+        logger.info("Finished local smoothing")
 
         out = adata.copy()
         out.X = sp.csr_matrix(smoothed_counts)

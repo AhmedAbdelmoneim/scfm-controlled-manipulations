@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 import json
+import logging
 import multiprocessing as mp
 from pathlib import Path
 import re
@@ -25,7 +26,15 @@ from scfm_controlled_manipulations.io import (
     metric_results_path,
 )
 
+logger = logging.getLogger(__name__)
 _WORKER_ADATA: ad.AnnData | None = None
+
+
+def _configure_logging(level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s [%(processName)s] %(name)s: %(message)s",
+    )
 
 
 def _load_config(path: str | Path) -> dict[str, Any]:
@@ -103,6 +112,11 @@ def ensure_gene_metadata(
         adata.var[gene_name_column] = (
             adata.var[source].astype(str).to_numpy() if source else adata.var_names.astype(str)
         )
+        logger.info(
+            "Added var[%s] from %s",
+            gene_name_column,
+            f"var[{source}]" if source else "var_names",
+        )
 
     if ensembl_id_column in adata.var:
         return
@@ -120,10 +134,12 @@ def ensure_gene_metadata(
     )
     if source:
         adata.var[ensembl_id_column] = adata.var[source].astype(str).to_numpy()
+        logger.info("Added var[%s] from var[%s]", ensembl_id_column, source)
         return
 
     if _looks_like_ensembl_ids(adata.var_names):
         adata.var[ensembl_id_column] = adata.var_names.astype(str)
+        logger.info("Added var[%s] from var_names", ensembl_id_column)
         return
 
     raise ValueError(
@@ -175,6 +191,7 @@ def _output_options(config: Mapping[str, Any]) -> dict[str, Any]:
         "gene_name_column": config.get("gene_name_column", "gene_name"),
         "ensembl_id_column": config.get("ensembl_id_column", "ensembl_id"),
         "overwrite": config.get("overwrite_manipulations", True),
+        "log_level": config.get("log_level", "INFO"),
     }
 
 
@@ -197,24 +214,34 @@ def _apply_and_write_manipulation(
     iid = intervention_id(name, kwargs)
     out_path = manipulation_path(results_dir, iid)
     if out_path.exists() and not output_options.get("overwrite", True):
+        logger.info("Skipping existing manipulation %s at %s", iid, out_path)
         return iid
 
+    logger.info("Applying intervention %s kwargs=%s", name, kwargs)
     cls = interventions.REGISTRY[name]
     intervention = cls(**kwargs)
     out = intervention.apply(adata_in, seed=seed)
     prepare_manipulated_adata(out, output_options)
     _write_h5ad(out, out_path, output_options.get("h5ad_compression"))
+    logger.info("Wrote manipulation %s to %s", iid, out_path)
     return iid
 
 
 def _init_worker_adata(input_path: str, options: Mapping[str, Any]) -> None:
     global _WORKER_ADATA
 
+    _configure_logging(str(options.get("log_level", "INFO")))
+    logger.info("Worker loading input AnnData from %s", input_path)
     _WORKER_ADATA = ad.read_h5ad(input_path)
     ensure_gene_metadata(
         _WORKER_ADATA,
         gene_name_column=str(options.get("gene_name_column", "gene_name")),
         ensembl_id_column=str(options.get("ensembl_id_column", "ensembl_id")),
+    )
+    logger.info(
+        "Worker loaded input AnnData with %d cells and %d genes",
+        _WORKER_ADATA.n_obs,
+        _WORKER_ADATA.n_vars,
     )
 
 
@@ -243,17 +270,30 @@ def run_manipulate(config: dict[str, Any]) -> None:
     manip_dir = results_dir / "manipulations"
     manip_dir.mkdir(parents=True, exist_ok=True)
 
+    logger.info(
+        "Starting manipulation run: input=%s results_dir=%s variants=%d workers=%d",
+        input_path,
+        results_dir,
+        len(specs),
+        workers,
+    )
     if workers == 1:
+        logger.info("Loading input AnnData from %s", input_path)
         adata_in = ad.read_h5ad(input_path)
         ensure_gene_metadata(
             adata_in,
             gene_name_column=str(output_options["gene_name_column"]),
             ensembl_id_column=str(output_options["ensembl_id_column"]),
         )
+        logger.info(
+            "Loaded input AnnData with %d cells and %d genes", adata_in.n_obs, adata_in.n_vars
+        )
         for spec in specs:
             _apply_and_write_manipulation(adata_in, results_dir, spec, seed, output_options)
+        logger.info("Finished manipulation run")
         return
 
+    logger.info("Launching %d manipulation workers", workers)
     tasks = [
         {
             "results_dir": str(results_dir),
@@ -272,6 +312,7 @@ def run_manipulate(config: dict[str, Any]) -> None:
         futures = [executor.submit(_apply_and_write_manipulation_worker, task) for task in tasks]
         for future in as_completed(futures):
             future.result()
+    logger.info("Finished manipulation run")
 
 
 def _reference_intervention_id(config: dict[str, Any]) -> str:
@@ -291,17 +332,25 @@ def run_analyze(config: dict[str, Any]) -> None:
     results_dir = Path(config["results_dir"])
     embeddings_root = Path(config["embeddings_root"])
     ref_id = _reference_intervention_id(config)
+    specs = expand_intervention_specs(config["interventions"])
 
     metrics_dir = results_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
     rows_by_metric: dict[str, list[dict[str, Any]]] = {m: [] for m in config["metrics"]}
+    logger.info(
+        "Starting analysis run: models=%d variants=%d metrics=%d",
+        len(config["models"]),
+        len(specs),
+        len(config["metrics"]),
+    )
 
     for model in config["models"]:
+        logger.info("Analyzing model %s", model)
         ref_path = embedding_path(embeddings_root, model, ref_id)
         emb_ref = load_embedding(ref_path)
 
-        for spec in expand_intervention_specs(config["interventions"]):
+        for spec in specs:
             name = spec["name"]
             kwargs = dict(spec.get("kwargs") or {})
             iid = intervention_id(name, kwargs)
@@ -327,6 +376,8 @@ def run_analyze(config: dict[str, Any]) -> None:
         out_path = metric_results_path(results_dir, metric_name)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(out_path, index=False)
+        logger.info("Wrote %d rows for metric %s to %s", len(rows), metric_name, out_path)
+    logger.info("Finished analysis run")
 
 
 def main() -> None:
@@ -341,6 +392,8 @@ def main() -> None:
 
     args = parser.parse_args()
     cfg = _load_config(args.config)
+    _configure_logging(str(cfg.get("log_level", "INFO")))
+    logger.info("Loaded config from %s", args.config)
 
     if args.command == "manipulate":
         run_manipulate(cfg)

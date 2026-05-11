@@ -60,6 +60,9 @@ entries in `kwargs` before expansion.
 Each output stores intervention provenance in `adata.uns["scfm_intervention"][name]`, including the
 seed and operation-specific metadata.
 
+The CLI uses Python logging and defaults to `log_level: INFO`. Set `log_level: DEBUG`, `WARNING`,
+or another standard logging level in the config to adjust verbosity.
+
 If `manipulation_workers` is omitted, manipulations run sequentially. Set it to a bounded value to
 process multiple variants in parallel; each worker loads one copy of the input AnnData, so choose
 this based on available memory.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ import numpy as np
 import pandas as pd
 
 from scfm_controlled_manipulations.base import Intervention
+
+logger = logging.getLogger(__name__)
 
 
 class GeneShuffle(Intervention):
@@ -101,6 +104,7 @@ class GeneShuffle(Intervention):
 
     def _read_chromosome_cache(self) -> dict[str, str]:
         if not self.chromosome_cache_path.exists():
+            logger.info("Chromosome cache not found at %s", self.chromosome_cache_path)
             return {}
 
         cache = pd.read_csv(self.chromosome_cache_path, dtype=str)
@@ -117,6 +121,11 @@ class GeneShuffle(Intervention):
             chromosome = self._normalize_chromosome(row.chromosome)
             if ensembl_id and chromosome:
                 chromosome_map[ensembl_id] = chromosome
+        logger.info(
+            "Loaded %d chromosome mappings from %s",
+            len(chromosome_map),
+            self.chromosome_cache_path,
+        )
         return chromosome_map
 
     def _write_chromosome_cache(self, chromosome_map: dict[str, str]) -> None:
@@ -126,10 +135,20 @@ class GeneShuffle(Intervention):
             columns=["ensembl_id", "chromosome"],
         )
         cache.to_csv(self.chromosome_cache_path, index=False)
+        logger.info(
+            "Wrote %d chromosome mappings to %s",
+            len(chromosome_map),
+            self.chromosome_cache_path,
+        )
 
     def _download_chromosomes(self, ensembl_ids: list[str]) -> dict[str, str]:
         import mygene
 
+        logger.info(
+            "Downloading chromosome labels for %d Ensembl IDs using species=%s",
+            len(ensembl_ids),
+            self.species,
+        )
         mg = mygene.MyGeneInfo()
         records = mg.querymany(
             ensembl_ids,
@@ -149,6 +168,7 @@ class GeneShuffle(Intervention):
             if chromosome:
                 chromosome_map[ensembl_id] = chromosome
 
+        logger.info("Downloaded %d chromosome labels", len(chromosome_map))
         return chromosome_map
 
     def _chromosome_labels(
@@ -192,6 +212,12 @@ class GeneShuffle(Intervention):
             raise ValueError(
                 "Could not find chromosome labels for any genes "
                 f"using species='{self.species}'. First missing IDs: {preview}"
+            )
+        if unmapped:
+            logger.info(
+                "Leaving %d unmapped genes fixed during %s shuffle",
+                len(unmapped),
+                self.variant,
             )
 
         return chromosome_labels, ensembl_ids, mapped_mask, unmapped
