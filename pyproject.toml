@@ -20,6 +20,7 @@ dependencies = [
     "ipython",
     "jupyterlab",
     "matplotlib",
+    "mygene",
     "notebook",
     "numpy",
     "pandas",
@@ -28,6 +29,7 @@ dependencies = [
     "python-dotenv",
     "pyyaml",
     "ruff",
+    "scanpy",
     "scikit-learn",
 ]
 requires-python = "~=3.11.0"
