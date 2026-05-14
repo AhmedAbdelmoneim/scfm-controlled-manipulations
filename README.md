@@ -81,6 +81,8 @@ and `n_genes`.
 The pipeline also ensures every saved file has `adata.var["gene_name"]` and
 `adata.var["ensembl_id"]`. It uses common aliases when present, falls back to `var_names` for
 `gene_name`, and uses `var_names` for `ensembl_id` only when they look like Ensembl gene IDs.
+Before writing, `adata.var_names` is set to `adata.var["gene_name"]` so embedding inputs use gene
+symbols as feature names while retaining Ensembl IDs in `.var`.
 
 By default, manipulated outputs are slimmed before writing: `layers`, `obsm`, `varm`, `obsp`,
 `varp`, `raw`, and unrelated `uns` entries are removed while preserving intervention provenance.

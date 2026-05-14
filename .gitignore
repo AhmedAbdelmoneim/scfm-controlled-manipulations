@@ -192,3 +192,4 @@ cython_debug/
 
 # custom configs
 configs/experiments/
+scripts/

@@ -151,6 +151,26 @@ def ensure_gene_metadata(
     )
 
 
+def set_var_names_to_gene_names(
+    adata: ad.AnnData,
+    *,
+    gene_name_column: str = "gene_name",
+) -> None:
+    """Use gene symbols as AnnData variable names for embedding-ready outputs."""
+    if gene_name_column not in adata.var:
+        raise ValueError(f"Cannot set var_names: adata.var['{gene_name_column}'] is missing")
+
+    gene_names = adata.var[gene_name_column].astype(str)
+    invalid = adata.var[gene_name_column].isna() | (gene_names.str.strip() == "")
+    if invalid.any():
+        raise ValueError(
+            f"Cannot set var_names: adata.var['{gene_name_column}'] contains "
+            f"{int(invalid.sum())} missing or empty gene names"
+        )
+
+    adata.var_names = gene_names.to_numpy()
+
+
 def slim_manipulated_adata(adata: ad.AnnData) -> None:
     """Drop large derived containers that are not needed for manipulated count files."""
     preserved_uns = {}
@@ -174,6 +194,10 @@ def prepare_manipulated_adata(adata: ad.AnnData, options: Mapping[str, Any]) -> 
         gene_name_column=str(options.get("gene_name_column", "gene_name")),
         ensembl_id_column=str(options.get("ensembl_id_column", "ensembl_id")),
     )
+    set_var_names_to_gene_names(
+        adata,
+        gene_name_column=str(options.get("gene_name_column", "gene_name")),
+    )
     refresh_count_metadata(adata)
 
     if options.get("slim_outputs", True):
@@ -184,6 +208,7 @@ def prepare_manipulated_adata(adata: ad.AnnData, options: Mapping[str, Any]) -> 
         "slimmed_output": bool(options.get("slim_outputs", True)),
         "gene_name_column": str(options.get("gene_name_column", "gene_name")),
         "ensembl_id_column": str(options.get("ensembl_id_column", "ensembl_id")),
+        "var_names": str(options.get("gene_name_column", "gene_name")),
     }
 
 
