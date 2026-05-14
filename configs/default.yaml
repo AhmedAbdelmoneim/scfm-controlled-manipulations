@@ -1,0 +1,46 @@
+# Paths are relative to cwd unless absolute.
+input_h5ad: <path to the input h5ad file>
+embeddings_root: <path to the embeddings root directory>
+results_dir: <path to the results directory>
+seed: 42
+log_level: INFO
+
+# Manipulation execution/output controls.
+# Parallel workers speed up sweeps, but each worker holds one copy of the input AnnData in memory.
+manipulation_workers: 4
+overwrite_manipulations: true
+slim_manipulated_outputs: true
+h5ad_compression: gzip
+gene_name_column: gene_name
+ensembl_id_column: ensembl_id
+hvg_n_top_genes: 2000
+
+interventions:
+  - name: gene_shuffle
+    kwargs:
+      variant: [random, chromosome, chromosome_control]
+  - name: gene_shuffle
+    kwargs:
+      variant: stratified
+      n_strata: [10]
+  - name: local_smoothing
+    kwargs:
+      k: [5, 10, 20, 50, 100]
+      n_pcs: 50
+  - name: downsample
+    kwargs:
+      fraction: [0.2, 0.4, 0.6, 0.8, 0.9, 0.95]
+  - name: gene_dropout
+    kwargs:
+      dropout_rate: [0.1, 0.2, 0.4, 0.6, 0.9]
+  - name: poisson_resampling
+    kwargs:
+      iterations: [1, 2, 3, 4, 5]
+
+# External embedding h5ad per model and intervention_id (see io.embedding_path).
+# Reference column for metrics: place ``reference.h5ad`` under each model folder
+# or set ``reference_intervention`` / ``reference_intervention_id`` below.
+reference_intervention_id: reference
+
+models: [pca, geneformer, scconcept]
+metrics: [distortion.mean_l2]
