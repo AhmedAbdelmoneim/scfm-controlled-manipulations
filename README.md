@@ -11,19 +11,90 @@ The manipulation step reads an input `.h5ad`, writes embedding-ready inputs unde
 make manipulate
 ```
 
-The analysis step expects one embedding `.h5ad` per model and intervention ID under
-`embeddings_root/{model}/{intervention_id}.h5ad`, computes configured metrics, and writes parquet
-tables under `results_dir/metrics`.
+The **evaluate** step compares each manipulation to the reference in both **raw** (manipulated
+`.h5ad` under `results_dir/manipulations`) and **embedding** space
+(`embeddings_root/{model}/{model}_{intervention_id}.h5ad`), and writes one consolidated CSV per model
+under `results_dir/evaluation/`. Run this after embeddings exist for each manipulation variant.
 
-```bash
-make analyze
+Expected layout per dataset (e.g. `processed/arterial/`):
+
+```text
+embeddings/
+  pca/pca_reference.h5ad
+  pca/pca_{intervention_id}.h5ad
+  geneformer/geneformer_reference.h5ad
+  ...
+results/
+  manipulations/reference.h5ad
+  manipulations/{intervention_id}.h5ad
+  manipulations/hvg.txt
+  evaluation/{model}_metrics.csv    # written by evaluate
 ```
 
-Both targets use `configs/default.yaml` by default. To run a different config:
+```bash
+make evaluate
+```
+
+| Command | Purpose | Main outputs |
+|---------|---------|--------------|
+| `make manipulate` | Run interventions on `input_h5ad` | `results_dir/manipulations/*.h5ad`, `reference.h5ad`, `hvg.txt` |
+| `make evaluate` | Structure metrics (stats, shift, kNN+diffusion, clustering, cell/batch) | `results_dir/evaluation/{model}_metrics.csv` |
+
+Both use the same `CONFIG` (default `configs/default.yaml`). Evaluation hyperparameters live under
+the top-level `evaluation:` key (see `configs/default.yaml`). Diffusion transitions are cached under
+`results_dir/evaluation_cache/`.
+
+### Evaluation output schema
+
+Each model writes `results_dir/evaluation/{model}_metrics.csv`. Every row includes
+`dataset_id`, `model`, `intervention_id`, `intervention_name`, `metric_category`, `metric_name`,
+`space`, `value_mean`, `value_median`, `value_std`, `null_value` (when applicable), `n_cells`, and
+`seed`. Additional columns depend on the category (`distance_metric`, `k`, `diffusion_t`,
+`resolution`, `metadata_type`, etc.).
+
+**Summary columns:** For metrics defined per cell, `value_mean` / `value_median` / `value_std` are the
+mean, median, and sample standard deviation across cells. For global metrics (e.g. silhouette,
+Leiden stability ARI between two clusterings), `value_std` is `NaN`. Classifier metrics use
+`value_mean` / `value_std` as the mean and std across cross-validation folds.
+
+**Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
+append embedding-minus-raw differences where both spaces exist.
+
+**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, `diffusion_js`, and
+`classifier_roc_auc_ovr_macro_cv_mean` include a single-shuffle null in `null_value` (broken
+ref/man pairing, preserved geometry).
+
+### Evaluation metrics (by category)
+
+| Category | Space(s) | Metric | Description |
+|----------|----------|--------|-------------|
+| `embedding_stats` | `raw`, `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution (mean / median / std across cells) |
+| | | `mean_col_variance_ref` / `_man` | Mean per-gene variance (global scalar; std `NaN`) |
+| `embedding_shift` | `raw`, `embedding` | `centroid_l2_shift` | L2 distance between reference and manipulated centroids |
+| | | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (mean / median / std) |
+| | | `shift_coherence_mean_cosine` | Per-cell cosine between shift vector and global shift direction |
+| `knn_metrics` | `raw`, `embedding` | `knn_recall` | kNN neighborhood recall vs reference (+ permutation null) |
+| | | `knn_jaccard` | kNN Jaccard overlap vs reference |
+| | `embedding` | `diffusion_sym_kl` | Symmetric KL between kNN random-walk transitions (+ null) |
+| | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
+| `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
+| | | `leiden_nmi` | NMI between independent Leiden clusterings |
+| `cell_type_and_batch_metrics` | `raw_reference`, `raw_manipulated`, `embedding_reference`, `embedding_manipulated` | `silhouette` | Label silhouette (global; std `NaN`) |
+| | | `neighbor_same_label_fraction` | Fraction of kNN neighbors sharing label (per-cell dist.) |
+| | | `neighbor_label_entropy_norm` | Normalized neighbor-label entropy (cell types only) |
+| | | `ilisi_like_inverse_simpson` | Inverse Simpson index of neighbor labels (cell types only) |
+| | | `label_vs_leiden_ari` / `_nmi` | Agreement between labels and Leiden clusters (**embedding** only) |
+| | | `classifier_roc_auc_ovr_macro_cv_mean` | OVR macro ROC-AUC (3-fold CV mean ± std; permutation null) |
+| | | `classifier_ap_macro_cv_mean` | OVR macro average precision (3-fold CV mean ± std) |
+
+Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
+`leiden_resolutions`, `leiden_resolution_cell_batch`, `cell_type_col`, `batch_col`, `dataset_id`.
+
+To run a different config:
 
 ```bash
 make manipulate CONFIG=configs/my-run.yaml
-make analyze CONFIG=configs/my-run.yaml
+make evaluate CONFIG=configs/my-run.yaml
 ```
 
 Interventions are configured as YAML entries with a registry `name` and optional `kwargs`:
@@ -63,8 +134,9 @@ seed and operation-specific metadata.
 The manipulation directory also includes:
 
 - `reference.h5ad`: the prepared, slimmed reference AnnData from the input dataset.
-- `hvg.txt`: one gene symbol per line for the top `hvg_n_top_genes` highly variable genes. These are
-  computed from the raw input counts with `scanpy.pp.highly_variable_genes(flavor="seurat_v3")`.
+- `hvg.txt`: one gene symbol per line for the top `hvg_n_top_genes` highly variable genes. When
+  `adata.raw` is present and matches the main matrix shape, HVGs are computed from `adata.raw.X`
+  (counts); otherwise from `adata.X`.
 
 The CLI uses Python logging and defaults to `log_level: INFO`. Set `log_level: DEBUG`, `WARNING`,
 or another standard logging level in the config to adjust verbosity.

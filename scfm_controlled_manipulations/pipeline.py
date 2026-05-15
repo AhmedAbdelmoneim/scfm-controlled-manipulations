@@ -4,8 +4,6 @@ import argparse
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import gc
-from itertools import product
-import json
 import logging
 import multiprocessing as mp
 from pathlib import Path
@@ -13,19 +11,16 @@ import re
 from typing import Any
 
 import anndata as ad
-import pandas as pd
 import scanpy as sc
 import yaml
 
 from scfm_controlled_manipulations import interventions
-from scfm_controlled_manipulations import metrics as metrics_pkg
+from scfm_controlled_manipulations.evaluation.run import run_evaluate
 from scfm_controlled_manipulations.io import (
-    embedding_path,
     intervention_id,
-    load_embedding,
     manipulation_path,
-    metric_results_path,
 )
+from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
 logger = logging.getLogger(__name__)
 _WORKER_ADATA: ad.AnnData | None = None
@@ -43,36 +38,6 @@ def _configure_logging(level: str = "INFO") -> None:
 def _load_config(path: str | Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def _is_sweep_value(value: Any) -> bool:
-    return isinstance(value, Sequence) and not isinstance(value, str | bytes)
-
-
-def _expand_kwargs(kwargs: Mapping[str, Any]) -> list[dict[str, Any]]:
-    if not kwargs:
-        return [{}]
-
-    keys = list(kwargs)
-    values = [
-        list(value) if _is_sweep_value(value) else [value]
-        for value in (kwargs[key] for key in keys)
-    ]
-    return [dict(zip(keys, combination, strict=True)) for combination in product(*values)]
-
-
-def expand_intervention_specs(specs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Expand list-valued intervention kwargs into a Cartesian sweep."""
-    expanded = []
-    for spec in specs:
-        name = spec["name"]
-        kwargs = dict(spec.get("kwargs") or {})
-        kwargs.update(dict(spec.get("sweep") or {}))
-
-        for expanded_kwargs in _expand_kwargs(kwargs):
-            expanded.append({"name": name, "kwargs": expanded_kwargs})
-
-    return expanded
 
 
 def refresh_count_metadata(adata: ad.AnnData) -> None:
@@ -267,8 +232,19 @@ def _write_hvg_file(
     if n_top_genes < 1:
         raise ValueError("Cannot compute HVGs for an AnnData object with zero genes")
 
+    if (
+        adata_in.raw is not None
+        and adata_in.raw.shape == adata_in.shape
+        and adata_in.raw.n_vars == adata_in.n_vars
+    ):
+        x_hvg = adata_in.raw.X
+        logger.info("HVG selection using adata.raw.X (counts layer)")
+    else:
+        x_hvg = adata_in.X
+        logger.info("HVG selection using adata.X")
+
     hvg_adata = ad.AnnData(
-        X=adata_in.X,
+        X=x_hvg,
         var=adata_in.var[[gene_name_column]].copy(),
     )
     sc.pp.highly_variable_genes(
@@ -375,6 +351,29 @@ def _log_manipulation_progress(done: int, total: int, result: Mapping[str, Any])
     )
 
 
+def _prepare_reference_phase(
+    input_path: Path,
+    manip_dir: Path,
+    output_options: Mapping[str, Any],
+    specs: Sequence[Mapping[str, Any]],
+    *,
+    prewarm_caches: bool,
+) -> ad.AnnData:
+    """Load input, ensure gene metadata, write reference + HVG, optionally prewarm caches."""
+    logger.info("Loading input AnnData from %s", input_path)
+    adata_in = ad.read_h5ad(input_path)
+    ensure_gene_metadata(
+        adata_in,
+        gene_name_column=str(output_options["gene_name_column"]),
+        ensembl_id_column=str(output_options["ensembl_id_column"]),
+    )
+    logger.info("Loaded input AnnData with %d cells and %d genes", adata_in.n_obs, adata_in.n_vars)
+    _write_embedding_inputs(adata_in, manip_dir, output_options)
+    if prewarm_caches:
+        _prewarm_intervention_caches(adata_in, specs, output_options)
+    return adata_in
+
+
 def _prewarm_intervention_caches(
     adata_in: ad.AnnData,
     specs: Sequence[Mapping[str, Any]],
@@ -418,17 +417,13 @@ def run_manipulate(config: dict[str, Any]) -> None:
         results_dir,
     )
     if workers == 1:
-        logger.info("Loading input AnnData from %s", input_path)
-        adata_in = ad.read_h5ad(input_path)
-        ensure_gene_metadata(
-            adata_in,
-            gene_name_column=str(output_options["gene_name_column"]),
-            ensembl_id_column=str(output_options["ensembl_id_column"]),
+        adata_in = _prepare_reference_phase(
+            input_path,
+            manip_dir,
+            output_options,
+            specs,
+            prewarm_caches=False,
         )
-        logger.info(
-            "Loaded input AnnData with %d cells and %d genes", adata_in.n_obs, adata_in.n_vars
-        )
-        _write_embedding_inputs(adata_in, manip_dir, output_options)
         for index, spec in enumerate(specs, start=1):
             result = _apply_and_write_manipulation(
                 adata_in, results_dir, spec, seed, output_options
@@ -438,18 +433,16 @@ def run_manipulate(config: dict[str, Any]) -> None:
         return
 
     logger.info("Launching %d manipulation workers", workers)
-    logger.info("Loading input AnnData from %s for reference/HVG/cache preparation", input_path)
-    adata_in = ad.read_h5ad(input_path)
+    adata_in = _prepare_reference_phase(
+        input_path,
+        manip_dir,
+        output_options,
+        specs,
+        prewarm_caches=True,
+    )
     try:
-        ensure_gene_metadata(
-            adata_in,
-            gene_name_column=str(output_options["gene_name_column"]),
-            ensembl_id_column=str(output_options["ensembl_id_column"]),
-        )
-        _write_embedding_inputs(adata_in, manip_dir, output_options)
-        _prewarm_intervention_caches(adata_in, specs, output_options)
-    finally:
         del adata_in
+    finally:
         gc.collect()
 
     tasks = [
@@ -474,71 +467,6 @@ def run_manipulate(config: dict[str, Any]) -> None:
     logger.info("Finished manipulation run: %d/%d variants complete", len(specs), len(specs))
 
 
-def _reference_intervention_id(config: dict[str, Any]) -> str:
-    if rid := config.get("reference_intervention_id"):
-        return str(rid)
-    ref = config.get("reference_intervention")
-    if not ref:
-        raise ValueError(
-            "Analyze requires `reference_intervention` {{name, kwargs}} or "
-            "`reference_intervention_id` string."
-        )
-    return intervention_id(ref["name"], dict(ref.get("kwargs") or {}))
-
-
-def run_analyze(config: dict[str, Any]) -> None:
-    """Load external embeddings per model and intervention, compute metrics, write parquet tables."""
-    results_dir = Path(config["results_dir"])
-    embeddings_root = Path(config["embeddings_root"])
-    ref_id = _reference_intervention_id(config)
-    specs = expand_intervention_specs(config["interventions"])
-
-    metrics_dir = results_dir / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-
-    rows_by_metric: dict[str, list[dict[str, Any]]] = {m: [] for m in config["metrics"]}
-    logger.info(
-        "Starting analysis run: models=%d variants=%d metrics=%d",
-        len(config["models"]),
-        len(specs),
-        len(config["metrics"]),
-    )
-
-    for model in config["models"]:
-        logger.info("Analyzing model %s", model)
-        ref_path = embedding_path(embeddings_root, model, ref_id)
-        emb_ref = load_embedding(ref_path)
-
-        for spec in specs:
-            name = spec["name"]
-            kwargs = dict(spec.get("kwargs") or {})
-            iid = intervention_id(name, kwargs)
-            pert_path = embedding_path(embeddings_root, model, iid)
-            emb_pert = load_embedding(pert_path)
-
-            for metric_name in config["metrics"]:
-                cls = metrics_pkg.REGISTRY[metric_name]
-                metric = cls()
-                computed = metric.compute(emb_ref, emb_pert)
-                row = {
-                    "model": model,
-                    "intervention_name": name,
-                    "intervention_id": iid,
-                    "kwargs_json": json.dumps(kwargs, sort_keys=True),
-                    "reference_intervention_id": ref_id,
-                    **computed,
-                }
-                rows_by_metric[metric_name].append(row)
-
-    for metric_name, rows in rows_by_metric.items():
-        df = pd.DataFrame(rows)
-        out_path = metric_results_path(results_dir, metric_name)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(out_path, index=False)
-        logger.info("Wrote %d rows for metric %s to %s", len(rows), metric_name, out_path)
-    logger.info("Finished analysis run")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="SCFM controlled manipulations pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -546,8 +474,11 @@ def main() -> None:
     p_man = sub.add_parser("manipulate", help="Run interventions on input_h5ad")
     p_man.add_argument("--config", type=Path, required=True)
 
-    p_an = sub.add_parser("analyze", help="Compute metrics from precomputed embeddings")
-    p_an.add_argument("--config", type=Path, required=True)
+    p_ev = sub.add_parser(
+        "evaluate",
+        help="Structure metrics (raw + embedding) vs reference for each manipulation",
+    )
+    p_ev.add_argument("--config", type=Path, required=True)
 
     args = parser.parse_args()
     cfg = _load_config(args.config)
@@ -556,8 +487,8 @@ def main() -> None:
 
     if args.command == "manipulate":
         run_manipulate(cfg)
-    elif args.command == "analyze":
-        run_analyze(cfg)
+    elif args.command == "evaluate":
+        run_evaluate(cfg)
 
 
 if __name__ == "__main__":

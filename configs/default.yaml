@@ -37,10 +37,18 @@ interventions:
     kwargs:
       iterations: [1, 2, 3, 4, 5]
 
-# External embedding h5ad per model and intervention_id (see io.embedding_path).
-# Reference column for metrics: place ``reference.h5ad`` under each model folder
-# or set ``reference_intervention`` / ``reference_intervention_id`` below.
+# Embeddings: embeddings_root/{model}/{model}_{intervention_id}.h5ad (see io.embedding_path).
 reference_intervention_id: reference
 
 models: [pca, geneformer, scconcept]
-metrics: [distortion.mean_l2]
+
+# Structure evaluation (``make evaluate``): paired raw + embedding vs reference per manipulation.
+evaluation:
+  k_values: [15, 30]
+  distance_metrics: [euclidean]
+  diffusion_t_values: [1, 2, 3, 4, 5, 6, 7, 8]
+  leiden_resolutions: [0.5, 1.0]
+  cell_type_col: cell_type
+  batch_col: batch
+  leiden_resolution_cell_batch: 1.0
+  dataset_id: null

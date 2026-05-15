@@ -64,10 +64,10 @@ CONFIG ?= configs/default.yaml
 manipulate:
 	uv run python -m scfm_controlled_manipulations.pipeline manipulate --config $(CONFIG)
 
-## Compute metrics from embeddings under embeddings_root
-.PHONY: analyze
-analyze:
-	uv run python -m scfm_controlled_manipulations.pipeline analyze --config $(CONFIG)
+## Paired structure metrics (raw + embedding vs reference) into results_dir/evaluation
+.PHONY: evaluate
+evaluate:
+	uv run python -m scfm_controlled_manipulations.pipeline evaluate --config $(CONFIG)
 
 
 
