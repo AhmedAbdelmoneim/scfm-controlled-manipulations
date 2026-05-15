@@ -414,7 +414,14 @@ def compute_cell_type_and_batch_metrics(
         ("embedding_reference", bundle.emb_ref),
         ("embedding_manipulated", bundle.emb_man),
     ]
+    logger.info(
+        "cell_type_and_batch_metrics: intervention=%s n_cells=%d (4 spaces)",
+        intervention_id,
+        n_cells,
+    )
+
     for space_label, mat in matrix_items:
+        logger.info("cell_type_and_batch_metrics: space=%s", space_label)
         _append_metadata_rows(
             rows,
             mat=mat,

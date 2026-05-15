@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 import anndata as ad
@@ -11,6 +13,8 @@ import scanpy as sc
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from scfm_controlled_manipulations.evaluation.metrics_common import scalar_summary
+
+logger = logging.getLogger(__name__)
 
 
 def run_leiden_labels(
@@ -113,11 +117,38 @@ def compute_clustering_metrics(
     n_cells = bundle.emb_ref.shape[0]
     ref, man = bundle.emb_ref, bundle.emb_man
 
+    n_jobs = len(distance_metrics) * len(k_values) * len(leiden_resolutions)
+    logger.info(
+        "clustering_metrics: intervention=%s n_cells=%d (%d Leiden pairs)",
+        intervention_id,
+        n_cells,
+        n_jobs,
+    )
+
+    job_i = 0
     for metric in distance_metrics:
         for k in k_values:
             for resolution in leiden_resolutions:
+                job_i += 1
+                logger.info(
+                    "clustering_metrics: Leiden %d/%d metric=%s k=%d resolution=%s",
+                    job_i,
+                    n_jobs,
+                    metric,
+                    k,
+                    resolution,
+                )
+                t0 = time.perf_counter()
                 stats = clustering_stability(
                     ref, man, k=k, metric=metric, resolution=resolution, seed=seed
+                )
+                logger.info(
+                    "clustering_metrics: Leiden %d/%d done in %.1fs (ARI=%.4f NMI=%.4f)",
+                    job_i,
+                    n_jobs,
+                    time.perf_counter() - t0,
+                    stats["ari"],
+                    stats["nmi"],
                 )
                 for mn, val in (
                     ("leiden_ari", stats["ari"]),

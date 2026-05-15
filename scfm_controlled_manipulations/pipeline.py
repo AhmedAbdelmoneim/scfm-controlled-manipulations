@@ -27,9 +27,19 @@ _WORKER_ADATA: ad.AnnData | None = None
 
 
 def _configure_logging(level: str = "INFO") -> None:
+    class _FlushingStreamHandler(logging.StreamHandler):
+        def emit(self, record: logging.LogRecord) -> None:
+            super().emit(record)
+            self.flush()
+
+    handler = _FlushingStreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(processName)s] %(name)s: %(message)s")
+    )
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s [%(processName)s] %(name)s: %(message)s",
+        handlers=[handler],
+        force=True,
     )
     for dependency_logger in ("httpx", "httpcore", "biothings", "biothings.client", "mygene"):
         logging.getLogger(dependency_logger).setLevel(logging.WARNING)

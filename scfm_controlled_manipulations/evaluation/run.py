@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -69,6 +70,26 @@ def _dataset_id(cfg: dict[str, Any], ev: dict[str, Any]) -> str:
     return Path(cfg["input_h5ad"]).stem
 
 
+def _planned_interventions(
+    specs: list[dict[str, Any]],
+    *,
+    ref_id: str,
+    embeddings_root: Path,
+    model: str,
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Interventions with an on-disk manipulated embedding for ``model``."""
+    planned: list[tuple[str, str, dict[str, Any]]] = []
+    for spec in specs:
+        name = str(spec["name"])
+        kwargs = dict(spec.get("kwargs") or {})
+        iid = intervention_id(name, kwargs)
+        if iid == ref_id:
+            continue
+        if embedding_path(embeddings_root, model, iid).is_file():
+            planned.append((name, iid, spec))
+    return planned
+
+
 def append_raw_embedding_gain_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Append rows with ``metric_category`` suffix ``_gain`` (embedding minus raw) where both exist."""
     gain_rows: list[dict[str, Any]] = []
@@ -123,6 +144,7 @@ def append_raw_embedding_gain_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def run_evaluate(cfg: dict[str, Any]) -> None:
     ev = merge_evaluation_config(cfg)
+    run_started = time.perf_counter()
 
     results_dir = Path(cfg["results_dir"])
     embeddings_root = Path(cfg["embeddings_root"])
@@ -140,26 +162,63 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     diffusion_t_values = [int(t) for t in ev["diffusion_t_values"]]
     leiden_resolutions = [float(x) for x in ev["leiden_resolutions"]]
 
-    logger.info(
-        "Starting evaluate run: models=%d variants=%d",
-        len(models),
-        len(specs),
+    total_jobs = sum(
+        len(_planned_interventions(specs, ref_id=ref_id, embeddings_root=embeddings_root, model=m))
+        for m in models
     )
 
-    for model in models:
+    logger.info(
+        "Evaluate: dataset_id=%s results_dir=%s embeddings_root=%s",
+        dataset_id,
+        results_dir,
+        embeddings_root,
+    )
+    logger.info(
+        "Plan: models=%d interventions_with_embeddings=%d "
+        "(k=%s metrics=%s diffusion_t=%s leiden_res=%s cache=%s)",
+        len(models),
+        total_jobs,
+        k_values,
+        distance_metrics,
+        diffusion_t_values,
+        leiden_resolutions,
+        cache_path,
+    )
+
+    completed_jobs = 0
+
+    for model_index, model in enumerate(models, start=1):
+        model_started = time.perf_counter()
+        planned = _planned_interventions(
+            specs, ref_id=ref_id, embeddings_root=embeddings_root, model=model
+        )
+        n_planned = len(planned)
+        n_non_ref = sum(
+            1
+            for spec in specs
+            if intervention_id(str(spec["name"]), dict(spec.get("kwargs") or {})) != ref_id
+        )
+        logger.info(
+            "Model %d/%d %s: %d interventions to evaluate (%d skipped without embeddings)",
+            model_index,
+            len(models),
+            model,
+            n_planned,
+            n_non_ref - n_planned,
+        )
+
         frames: list[pd.DataFrame] = []
         reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue] = {}
-        for spec in specs:
-            name = str(spec["name"])
-            kwargs = dict(spec.get("kwargs") or {})
-            iid = intervention_id(name, kwargs)
-            if iid == ref_id:
-                continue
 
-            emb_man = embedding_path(embeddings_root, model, iid)
-            if not emb_man.is_file():
-                logger.warning("Missing embedding %s; skipping intervention %s", emb_man, iid)
-                continue
+        for int_index, (name, iid, _spec) in enumerate(planned, start=1):
+            job_started = time.perf_counter()
+            logger.info(
+                "  [%d/%d] %s (%s) — loading aligned bundle",
+                int_index,
+                n_planned,
+                iid,
+                name,
+            )
 
             try:
                 bundle = load_aligned_bundle(
@@ -170,12 +229,22 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     reference_intervention_id=ref_id,
                 )
             except FileNotFoundError as err:
-                logger.warning("%s", err)
+                logger.warning("  [%d/%d] %s skipped: %s", int_index, n_planned, iid, err)
                 continue
             except ValueError as err:
                 logger.error("Alignment failed for %s: %s", iid, err)
                 raise
 
+            n_cells = bundle.emb_ref.shape[0]
+            logger.info(
+                "  [%d/%d] %s — %d cells; running metric blocks",
+                int_index,
+                n_planned,
+                iid,
+                n_cells,
+            )
+
+            t0 = time.perf_counter()
             frames.append(
                 compute_embedding_stats(
                     bundle=bundle,
@@ -186,6 +255,15 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     seed=seed,
                 )
             )
+            logger.info(
+                "  [%d/%d] %s — embedding_stats done (%.1fs)",
+                int_index,
+                n_planned,
+                iid,
+                time.perf_counter() - t0,
+            )
+
+            t0 = time.perf_counter()
             frames.append(
                 compute_embedding_shift(
                     bundle=bundle,
@@ -196,6 +274,15 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     seed=seed,
                 )
             )
+            logger.info(
+                "  [%d/%d] %s — embedding_shift done (%.1fs)",
+                int_index,
+                n_planned,
+                iid,
+                time.perf_counter() - t0,
+            )
+
+            t0 = time.perf_counter()
             frames.append(
                 compute_knn_metrics(
                     bundle=bundle,
@@ -210,6 +297,15 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     cache_dir=cache_path,
                 )
             )
+            logger.info(
+                "  [%d/%d] %s — knn_metrics done (%.1fs)",
+                int_index,
+                n_planned,
+                iid,
+                time.perf_counter() - t0,
+            )
+
+            t0 = time.perf_counter()
             frames.append(
                 compute_clustering_metrics(
                     bundle=bundle,
@@ -223,6 +319,15 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     leiden_resolutions=leiden_resolutions,
                 )
             )
+            logger.info(
+                "  [%d/%d] %s — clustering_metrics done (%.1fs)",
+                int_index,
+                n_planned,
+                iid,
+                time.perf_counter() - t0,
+            )
+
+            t0 = time.perf_counter()
             frames.append(
                 compute_cell_type_and_batch_metrics(
                     bundle=bundle,
@@ -239,15 +344,53 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     reference_cache=reference_cache,
                 )
             )
+            logger.info(
+                "  [%d/%d] %s — cell_type_and_batch_metrics done (%.1fs)",
+                int_index,
+                n_planned,
+                iid,
+                time.perf_counter() - t0,
+            )
+
+            completed_jobs += 1
+            elapsed_run = time.perf_counter() - run_started
+            if completed_jobs > 0 and total_jobs > 0:
+                eta_s = elapsed_run / completed_jobs * (total_jobs - completed_jobs)
+                logger.info(
+                    "  [%d/%d] %s — intervention complete (%.1fs); "
+                    "overall %d/%d jobs (%.0f%%), ETA ~%.0f min",
+                    int_index,
+                    n_planned,
+                    iid,
+                    time.perf_counter() - job_started,
+                    completed_jobs,
+                    total_jobs,
+                    100.0 * completed_jobs / total_jobs,
+                    eta_s / 60.0,
+                )
 
         if not frames:
             logger.warning("No evaluation rows for model %s", model)
             continue
 
+        t0 = time.perf_counter()
         out_df = pd.concat(frames, ignore_index=True)
         out_df = append_raw_embedding_gain_rows(out_df)
         out_path = evaluation_metrics_csv_path(results_dir, model)
         out_df.to_csv(out_path, index=False)
-        logger.info("Wrote %d rows to %s", len(out_df), out_path)
+        logger.info(
+            "Model %s finished: wrote %d rows to %s (concat/write %.1fs; model total %.1f min)",
+            model,
+            len(out_df),
+            out_path,
+            time.perf_counter() - t0,
+            (time.perf_counter() - model_started) / 60.0,
+        )
 
-    logger.info("Finished evaluate run")
+    logger.info(
+        "Finished evaluate run for dataset_id=%s (%d/%d jobs in %.1f min)",
+        dataset_id,
+        completed_jobs,
+        total_jobs,
+        (time.perf_counter() - run_started) / 60.0,
+    )

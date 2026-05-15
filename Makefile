@@ -67,7 +67,7 @@ manipulate:
 ## Paired structure metrics (raw + embedding vs reference) into results_dir/evaluation
 .PHONY: evaluate
 evaluate:
-	uv run python -m scfm_controlled_manipulations.pipeline evaluate --config $(CONFIG)
+	PYTHONUNBUFFERED=1 uv run python -m scfm_controlled_manipulations.pipeline evaluate --config $(CONFIG)
 
 
 

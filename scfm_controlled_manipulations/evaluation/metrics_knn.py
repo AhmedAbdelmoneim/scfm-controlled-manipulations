@@ -7,14 +7,18 @@ preserved manipulated geometry).
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 import pickle
+import time
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 from sklearn.neighbors import NearestNeighbors
+
+logger = logging.getLogger(__name__)
 
 
 def knn_neighbors(mat: Any, k: int, metric: str) -> tuple[np.ndarray, np.ndarray]:
@@ -231,9 +235,37 @@ def _load_transition_t(
         side=side,
     )
     if path.is_file():
+        logger.debug(
+            "diffusion cache hit: %s space=%s metric=%s k=%d t=%d side=%s",
+            path.name,
+            space,
+            metric,
+            k,
+            t,
+            side,
+        )
         with open(path, "rb") as f:
             return pickle.load(f)
+    logger.info(
+        "diffusion cache miss — building space=%s metric=%s k=%d t=%d side=%s (%d cells)",
+        space,
+        metric,
+        k,
+        t,
+        side,
+        n_cells,
+    )
+    t0 = time.perf_counter()
     mat = builder()
+    logger.info(
+        "diffusion built space=%s metric=%s k=%d t=%d side=%s in %.1fs",
+        space,
+        metric,
+        k,
+        t,
+        side,
+        time.perf_counter() - t0,
+    )
     with open(path, "wb") as f:
         pickle.dump(mat, f, protocol=pickle.HIGHEST_PROTOCOL)
     return mat
@@ -294,9 +326,19 @@ def compute_knn_metrics(
     n_cells = bundle.emb_ref.shape[0]
     k_sorted = sorted(int(k) for k in k_values)
     k_max = k_sorted[-1]
-
     knn_spaces = ("raw", "embedding")
     diffusion_spaces = ("embedding",)
+    n_diffusion_jobs = (
+        len(diffusion_spaces) * len(distance_metrics) * len(k_sorted) * len(diffusion_t_values) * 2
+    )
+
+    logger.info(
+        "knn_metrics: intervention=%s n_cells=%d k_max=%d (%d diffusion matrices to load/build)",
+        intervention_id,
+        n_cells,
+        k_max,
+        n_diffusion_jobs,
+    )
 
     def mats_for(space: str) -> tuple[Any, Any]:
         if space == "raw":
@@ -306,6 +348,12 @@ def compute_knn_metrics(
     for space in knn_spaces:
         ref_mat, man_mat = mats_for(space)
         for metric in distance_metrics:
+            logger.info(
+                "knn_metrics: space=%s metric=%s — kNN graph at k_max=%d",
+                space,
+                metric,
+                k_max,
+            )
             _, ref_idx_max = knn_neighbors(ref_mat, k_max, metric)
             _, man_idx_max = knn_neighbors(man_mat, k_max, metric)
             for k in k_sorted:
