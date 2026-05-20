@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors, knn_overlap_per_cell
 from scfm_controlled_manipulations.io import embedding_path, manipulation_path
@@ -178,11 +179,14 @@ class NeighborVectorizedTest(unittest.TestCase):
                 ent.append(float(-np.sum(p * np.log(p))))
             return float(np.mean(ent) / np.log(n_labels))
 
-        ent_m, _, _ = distribution_summary(
+        ent_summary = distribution_summary(
             _neighbor_label_entropy_norm_per_cell(inverse, neighbor_idx)
         )
-        self.assertAlmostEqual(ent_m, _entropy_loop(inverse, neighbor_idx), places=10)
-        ilisi_m, _, _ = distribution_summary(_ilisi_like_score_per_cell(inverse, neighbor_idx))
+        self.assertAlmostEqual(ent_summary.mean, _entropy_loop(inverse, neighbor_idx), places=10)
+        ilisi_summary = distribution_summary(
+            _ilisi_like_score_per_cell(inverse, neighbor_idx)
+        )
+        ilisi_m = ilisi_summary.mean
         self.assertGreater(ilisi_m, 0.0)
 
 
@@ -287,15 +291,174 @@ class EmbeddingAlignmentTest(unittest.TestCase):
             )
 
 
-class EmbeddingShiftTest(unittest.TestCase):
-    def test_centroid_shift_dense(self) -> None:
-        from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
-            _centroid_l2_dense,
+class DistributionSummaryTest(unittest.TestCase):
+    def test_known_array_quantiles(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_common import (
+            distribution_summary,
+            scalar_summary,
         )
 
-        ref = np.zeros((5, 2), dtype=np.float32)
-        man = np.ones((5, 2), dtype=np.float32)
-        self.assertAlmostEqual(_centroid_l2_dense(ref, man), np.sqrt(2.0), places=4)
+        summary = distribution_summary(np.array([0.0, 1.0, 2.0, 3.0, 4.0]))
+        self.assertAlmostEqual(summary.mean, 2.0, places=6)
+        self.assertAlmostEqual(summary.median, 2.0, places=6)
+        self.assertAlmostEqual(summary.min, 0.0, places=6)
+        self.assertAlmostEqual(summary.max, 4.0, places=6)
+        self.assertAlmostEqual(summary.q05, 0.2, places=6)
+        self.assertAlmostEqual(summary.q95, 3.8, places=6)
+
+        empty = distribution_summary(np.array([]))
+        self.assertTrue(np.isnan(empty.mean))
+        scalar = scalar_summary(3.5)
+        self.assertAlmostEqual(scalar.mean, 3.5, places=6)
+        self.assertTrue(np.isnan(scalar.q25))
+
+
+class StatsShiftMetricsTest(unittest.TestCase):
+    def _toy_bundle(self):
+        from scfm_controlled_manipulations.evaluation.data import AlignedBundle
+
+        ref = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+        man = ref + np.array([1.0, 0.0], dtype=np.float32)
+        return AlignedBundle(
+            raw_ref=sp.csr_matrix(ref),
+            raw_man=sp.csr_matrix(man),
+            emb_ref=ref.copy(),
+            emb_man=man.copy(),
+            obs=pd.DataFrame(index=["a", "b", "c"]),
+        )
+
+    def test_paired_shift_and_dot_metrics(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
+            compute_embedding_shift,
+        )
+
+        bundle = self._toy_bundle()
+        df = compute_embedding_shift(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+            ref_cache=None,
+            pairwise_max_pairs=None,
+        )
+        paired = df[
+            (df["metric_name"] == "paired_cell_l2_norm")
+            & (df["space"] == "embedding")
+        ].iloc[0]
+        self.assertAlmostEqual(paired["value_mean"], 1.0, places=5)
+        dot_row = df[
+            (df["metric_name"] == "shift_dot_with_mean")
+            & (df["space"] == "embedding")
+        ].iloc[0]
+        self.assertGreater(dot_row["value_mean"], 0.0)
+
+    def test_col_variance_distribution(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
+            compute_embedding_stats,
+        )
+
+        bundle = self._toy_bundle()
+        df = compute_embedding_stats(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+        )
+        col_ref = df[
+            (df["metric_name"] == "col_variance_ref")
+            & (df["space"] == "embedding")
+        ].iloc[0]
+        self.assertIn("value_q25", col_ref.index)
+        self.assertFalse(np.isnan(col_ref["value_mean"]))
+
+    def test_reference_cache_idempotent(self) -> None:
+        from scfm_controlled_manipulations.evaluation.context import (
+            DatasetEvaluateContext,
+            ModelEvaluateContext,
+        )
+        from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
+            compute_embedding_stats,
+            compute_embedding_shift,
+        )
+        from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
+            ReferenceStatsShiftCache,
+            precompute_reference_stats_shift,
+        )
+
+        bundle = self._toy_bundle()
+        dataset_ctx = DatasetEvaluateContext(
+            raw_ref=bundle.raw_ref,
+            obs=bundle.obs,
+            n_cells=3,
+        )
+        model_ctx = ModelEvaluateContext(emb_ref=bundle.emb_ref)
+        model_ctx.ref_stats_cache = precompute_reference_stats_shift(
+            model_ctx,
+            dataset_ctx,
+            seed=0,
+            pairwise_cell_subsample_n=3,
+            pairwise_max_pairs=None,
+        )
+
+        man2 = bundle.emb_man + np.array([0.0, 1.0], dtype=np.float32)
+        bundle2 = type(bundle)(
+            raw_ref=bundle.raw_ref,
+            raw_man=sp.csr_matrix(bundle.raw_man.toarray() + np.array([0.0, 1.0])),
+            emb_ref=bundle.emb_ref,
+            emb_man=man2,
+            obs=bundle.obs,
+        )
+
+        df1 = compute_embedding_stats(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+            ref_cache=model_ctx.ref_stats_cache,
+        )
+        df2 = compute_embedding_stats(
+            bundle=bundle2,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i2",
+            intervention_name="n",
+            seed=0,
+            ref_cache=model_ctx.ref_stats_cache,
+        )
+        ref1 = df1[df1["metric_name"] == "mean_row_l2_norm_ref"]
+        ref2 = df2[df2["metric_name"] == "mean_row_l2_norm_ref"]
+        pd.testing.assert_frame_equal(
+            ref1.drop(columns=["intervention_id"]),
+            ref2.drop(columns=["intervention_id"]),
+        )
+
+        sh1 = compute_embedding_shift(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+            ref_cache=model_ctx.ref_stats_cache,
+        )
+        sh2 = compute_embedding_shift(
+            bundle=bundle2,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i2",
+            intervention_name="n",
+            seed=0,
+            ref_cache=model_ctx.ref_stats_cache,
+        )
+        w1 = sh1[sh1["metric_name"] == "within_ref_pairwise_l2"]["value_mean"].values
+        w2 = sh2[sh2["metric_name"] == "within_ref_pairwise_l2"]["value_mean"].values
+        np.testing.assert_allclose(w1, w2)
 
 
 if __name__ == "__main__":

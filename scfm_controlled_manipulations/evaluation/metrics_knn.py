@@ -17,6 +17,11 @@ import scipy.sparse as sp
 from sklearn.neighbors import NearestNeighbors
 
 from scfm_controlled_manipulations.evaluation.disk_cache import load_or_build_pickle
+from scfm_controlled_manipulations.evaluation.metrics_common import (
+    DistributionSummary,
+    distribution_summary,
+    summary_to_row_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -253,9 +258,7 @@ def _row_metric_row(
     category: str,
     metric_name: str,
     space: str,
-    value_mean: float,
-    value_median: float,
-    value_std: float,
+    summary: DistributionSummary,
     null_value: float,
     n_cells: int,
     seed: int,
@@ -269,9 +272,7 @@ def _row_metric_row(
         "metric_category": category,
         "metric_name": metric_name,
         "space": space,
-        "value_mean": value_mean,
-        "value_median": value_median,
-        "value_std": value_std,
+        **summary_to_row_fields(summary),
         "null_value": null_value,
         "n_cells": n_cells,
         "seed": seed,
@@ -363,9 +364,7 @@ def compute_knn_metrics(
                         category="knn_metrics",
                         metric_name="knn_recall",
                         space=space,
-                        value_mean=float(np.mean(recall)),
-                        value_median=float(np.median(recall)),
-                        value_std=float(np.std(recall)),
+                        summary=distribution_summary(recall),
                         null_value=null_recall,
                         n_cells=n_cells,
                         seed=seed,
@@ -381,9 +380,7 @@ def compute_knn_metrics(
                         category="knn_metrics",
                         metric_name="knn_jaccard",
                         space=space,
-                        value_mean=float(np.mean(jaccard)),
-                        value_median=float(np.median(jaccard)),
-                        value_std=float(np.std(jaccard)),
+                        summary=distribution_summary(jaccard),
                         null_value=np.nan,
                         n_cells=n_cells,
                         seed=seed,
@@ -441,8 +438,6 @@ def compute_knn_metrics(
                     )
 
                     sym_kl, js = sym_kl_js_per_cell(p_t, q_t, row_chunk=row_chunk)
-                    sym_mean = float(np.mean(sym_kl))
-                    js_mean = float(np.mean(js))
 
                     null_rng = np.random.default_rng(
                         _diffusion_null_seed(seed, space, metric, k, t)
@@ -461,9 +456,7 @@ def compute_knn_metrics(
                             category="knn_metrics",
                             metric_name="diffusion_sym_kl",
                             space=space,
-                            value_mean=sym_mean,
-                            value_median=float(np.median(sym_kl)),
-                            value_std=float(np.std(sym_kl)),
+                            summary=distribution_summary(sym_kl),
                             null_value=float(null_sym_mean),
                             n_cells=n_cells,
                             seed=seed,
@@ -479,9 +472,7 @@ def compute_knn_metrics(
                             category="knn_metrics",
                             metric_name="diffusion_js",
                             space=space,
-                            value_mean=js_mean,
-                            value_median=float(np.median(js)),
-                            value_std=float(np.std(js)),
+                            summary=distribution_summary(js),
                             null_value=float(null_js_mean),
                             n_cells=n_cells,
                             seed=seed,

@@ -54,6 +54,7 @@ def evaluate_intervention(
     batch_col: str | None,
     leiden_resolution_cell_batch: float,
     static_row_templates: list[list[dict[str, Any]]],
+    stats_shift_pairwise_max_pairs: int | None = None,
 ) -> list[pd.DataFrame]:
     job_started = time.perf_counter()
     logger.info(
@@ -100,6 +101,7 @@ def evaluate_intervention(
             intervention_id=iid,
             intervention_name=name,
             seed=seed,
+            ref_cache=model_ctx.ref_stats_cache,
         )
     )
     logger.info(
@@ -119,6 +121,8 @@ def evaluate_intervention(
             intervention_id=iid,
             intervention_name=name,
             seed=seed,
+            ref_cache=model_ctx.ref_stats_cache,
+            pairwise_max_pairs=stats_shift_pairwise_max_pairs,
         )
     )
     logger.info(

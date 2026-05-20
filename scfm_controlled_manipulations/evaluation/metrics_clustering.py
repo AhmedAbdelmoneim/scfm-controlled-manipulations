@@ -11,7 +11,11 @@ import pandas as pd
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
-from scfm_controlled_manipulations.evaluation.metrics_common import scalar_summary
+from scfm_controlled_manipulations.evaluation.metrics_common import (
+    DistributionSummary,
+    scalar_summary,
+    summary_to_row_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +78,7 @@ def _row(
     k: int,
     resolution: float,
     metric_name: str,
-    value_mean: float,
-    value_median: float,
-    value_std: float,
+    summary: DistributionSummary,
     n_cells: int,
     seed: int,
     n_ref_clusters: float,
@@ -90,9 +92,7 @@ def _row(
         "metric_category": "clustering_metrics",
         "metric_name": metric_name,
         "space": "embedding",
-        "value_mean": value_mean,
-        "value_median": value_median,
-        "value_std": value_std,
+        **summary_to_row_fields(summary),
         "null_value": np.nan,
         "n_cells": n_cells,
         "seed": seed,
@@ -164,7 +164,6 @@ def compute_clustering_metrics(
                     ("leiden_ari", stats["ari"]),
                     ("leiden_nmi", stats["nmi"]),
                 ):
-                    vm, vmed, vs = scalar_summary(val)
                     rows.append(
                         _row(
                             dataset_id=dataset_id,
@@ -175,9 +174,7 @@ def compute_clustering_metrics(
                             k=k,
                             resolution=resolution,
                             metric_name=mn,
-                            value_mean=vm,
-                            value_median=vmed,
-                            value_std=vs,
+                            summary=scalar_summary(val),
                             n_cells=n_cells,
                             seed=seed,
                             n_ref_clusters=stats["n_ref_clusters"],

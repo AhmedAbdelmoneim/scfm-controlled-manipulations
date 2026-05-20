@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from scfm_controlled_manipulations.evaluation.context import load_dataset_context
+from scfm_controlled_manipulations.evaluation.metrics_common import VALUE_SUMMARY_COLUMNS
 from scfm_controlled_manipulations.evaluation.pool import (
     evaluation_mp_context,
     use_fork_shared_memory,
@@ -55,6 +56,8 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "dataset_id": None,
     "evaluation_workers": 1,
     "evaluation_mp_start_method": "fork",
+    "stats_shift_pairwise_cell_subsample_n": 500,
+    "stats_shift_pairwise_max_pairs": 10_000,
 }
 
 
@@ -128,23 +131,28 @@ def append_raw_embedding_gain_rows(df: pd.DataFrame) -> pd.DataFrame:
         merged = emb.merge(raw, on=keys, how="inner", suffixes=("_emb", "_raw"))
         if merged.empty:
             continue
-        block = pd.DataFrame(
-            {
-                "dataset_id": merged["dataset_id"],
-                "model": merged["model"],
-                "intervention_id": merged["intervention_id"],
-                "intervention_name": merged["intervention_name"],
-                "metric_category": f"{cat}_gain",
-                "metric_name": merged["metric_name"],
-                "space": "embedding_minus_raw",
-                "value_mean": merged["value_mean_emb"] - merged["value_mean_raw"],
-                "value_median": merged["value_median_emb"] - merged["value_median_raw"],
-                "value_std": np.nan,
-                "null_value": np.nan,
-                "n_cells": merged["n_cells_emb"].astype(int),
-                "seed": merged["seed_emb"].astype(int),
-            }
-        )
+        block_data: dict[str, Any] = {
+            "dataset_id": merged["dataset_id"],
+            "model": merged["model"],
+            "intervention_id": merged["intervention_id"],
+            "intervention_name": merged["intervention_name"],
+            "metric_category": f"{cat}_gain",
+            "metric_name": merged["metric_name"],
+            "space": "embedding_minus_raw",
+            "null_value": np.nan,
+            "n_cells": merged["n_cells_emb"].astype(int),
+            "seed": merged["seed_emb"].astype(int),
+        }
+        for col in VALUE_SUMMARY_COLUMNS:
+            emb_col = f"{col}_emb"
+            raw_col = f"{col}_raw"
+            if col == "value_std":
+                block_data[col] = np.nan
+            elif emb_col in merged.columns and raw_col in merged.columns:
+                block_data[col] = merged[emb_col] - merged[raw_col]
+            else:
+                block_data[col] = np.nan
+        block = pd.DataFrame(block_data)
         for optional in ("distance_metric", "k", "diffusion_t", "resolution"):
             col = optional
             if col in merged.columns:
@@ -216,6 +224,13 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     cell_type_col = _optional_obs_column(ev.get("cell_type_col"))
     batch_col = _optional_obs_column(ev.get("batch_col"))
     leiden_resolution_cell_batch = float(ev.get("leiden_resolution_cell_batch", 1.0))
+    stats_shift_pairwise_cell_subsample_n = int(
+        ev.get("stats_shift_pairwise_cell_subsample_n", 500)
+    )
+    pairwise_max_raw = ev.get("stats_shift_pairwise_max_pairs")
+    stats_shift_pairwise_max_pairs = (
+        int(pairwise_max_raw) if pairwise_max_raw is not None else None
+    )
 
     total_jobs = sum(
         len(
@@ -322,12 +337,15 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             cache_path=cache_path,
             cell_type_col=cell_type_col,
             batch_col=batch_col,
+            stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
+            stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
         )
         logger.info(
-            "Reference context ready (%.1fs; classifier cache=%d; Leiden cache=%d)",
+            "Reference context ready (%.1fs; classifier cache=%d; Leiden cache=%d; stats cache=%s)",
             time.perf_counter() - t0,
             len(shared.reference_cache),
             len(shared.model_ctx.leiden_cache),
+            shared.model_ctx.ref_stats_cache is not None,
         )
 
         pool_workers = min(evaluation_workers, n_planned)
@@ -384,6 +402,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     cache_path=str(cache_path),
                     cell_type_col=cell_type_col,
                     batch_col=batch_col,
+                    stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
+                    stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
                 )
                 executor_kwargs = {
                     "max_workers": pool_workers,

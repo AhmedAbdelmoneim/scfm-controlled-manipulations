@@ -64,17 +64,18 @@ nohup scripts/run_one_evaluation.sh lung > run_logs/batch_eval_lung.log 2>&1 &
 
 Each model writes `results_dir/evaluation/{model}_metrics.csv`. Every row includes
 `dataset_id`, `model`, `intervention_id`, `intervention_name`, `metric_category`, `metric_name`,
-`space`, `value_mean`, `value_median`, `value_std`, `null_value` (when applicable), `n_cells`, and
-`seed`. Additional columns depend on the category (`distance_metric`, `k`, `diffusion_t`,
-`resolution`, `metadata_type`, etc.).
+`space`, `value_mean`, `value_median`, `value_std`, `value_min`, `value_max`, `value_q05`,
+`value_q25`, `value_q75`, `value_q95`, `null_value` (when applicable), `n_cells`, and `seed`.
+Additional columns depend on the category (`distance_metric`, `k`, `diffusion_t`, `resolution`,
+`metadata_type`, etc.).
 
-**Summary columns:** For metrics defined per cell, `value_mean` / `value_median` / `value_std` are the
-mean, median, and sample standard deviation across cells. For global metrics (e.g. silhouette,
-Leiden stability ARI between two clusterings), `value_std` is `NaN`. Classifier metrics use
-`value_mean` / `value_std` as the mean and std across cross-validation folds.
+**Summary columns:** For distribution-based metrics, the `value_*` columns summarize a per-cell (or
+per-dimension / per-pair) array: mean, median, sample std, min, max, and quantiles (5/25/75/95%).
+Global metrics (silhouette, Leiden ARI/NMI) set quantiles and often `value_std` to `NaN`.
+Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
 
 **Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
-append embedding-minus-raw differences where both spaces exist.
+append embedding-minus-raw differences for all summary columns except `value_std` (left `NaN`).
 
 **Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, `diffusion_js`, and
 `classifier_roc_auc_ovr_macro_cv_mean` include a single-shuffle null in `null_value` (broken
@@ -84,11 +85,12 @@ ref/man pairing, preserved geometry).
 
 | Category | Space(s) | Metric | Description |
 |----------|----------|--------|-------------|
-| `embedding_stats` | `raw`, `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution (mean / median / std across cells) |
-| | | `mean_col_variance_ref` / `_man` | Mean per-gene variance (global scalar; std `NaN`) |
-| `embedding_shift` | `raw`, `embedding` | `centroid_l2_shift` | L2 distance between reference and manipulated centroids |
-| | | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (mean / median / std) |
-| | | `shift_coherence_mean_cosine` | Per-cell cosine between shift vector and global shift direction |
+| `embedding_stats` | `raw`, `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution |
+| | | `col_variance_ref` / `_man` | Per-gene / per-dim variance distribution |
+| `embedding_shift` | `raw`, `embedding` | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (all aligned cells) |
+| | | `shift_dot_with_mean` | Per-cell (man − ref) · mean shift vector |
+| | | `within_ref_pairwise_l2` | Subsampled all-pairs spread in reference |
+| | | `within_man_pairwise_l2` | Same cell subset, all-pairs spread in manipulation |
 | `knn_metrics` | `raw`, `embedding` | `knn_recall` | kNN neighborhood recall vs reference (+ permutation null) |
 | | | `knn_jaccard` | kNN Jaccard overlap vs reference |
 | | `embedding` | `diffusion_sym_kl` | Symmetric KL between kNN random-walk transitions (+ null) |
@@ -104,7 +106,8 @@ ref/man pairing, preserved geometry).
 | | | `classifier_ap_macro_cv_mean` | OVR macro average precision (3-fold CV mean ± std) |
 
 Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
-`leiden_resolutions`, `leiden_resolution_cell_batch`, `cell_type_col`, `batch_col`, `dataset_id`.
+`leiden_resolutions`, `leiden_resolution_cell_batch`, `cell_type_col`, `batch_col`, `dataset_id`,
+`stats_shift_pairwise_cell_subsample_n`, `stats_shift_pairwise_max_pairs`.
 
 To run a different config:
 

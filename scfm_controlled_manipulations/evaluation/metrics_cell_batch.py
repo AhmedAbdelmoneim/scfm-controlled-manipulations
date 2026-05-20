@@ -23,8 +23,10 @@ from sklearn.preprocessing import StandardScaler, label_binarize
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.evaluation.metrics_clustering import run_leiden_labels
 from scfm_controlled_manipulations.evaluation.metrics_common import (
+    DistributionSummary,
     distribution_summary,
     scalar_summary,
+    summary_to_row_fields,
 )
 from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors
 
@@ -311,13 +313,33 @@ def _append_metadata_rows(
             "leiden_resolution": leiden_resolution,
             "metadata_type": metadata_type,
         }
+        roc_summary = DistributionSummary(
+            mean=roc_m,
+            median=roc_m,
+            std=roc_s,
+            min=roc_m,
+            max=roc_m,
+            q05=float("nan"),
+            q25=float("nan"),
+            q75=float("nan"),
+            q95=float("nan"),
+        )
+        ap_summary = DistributionSummary(
+            mean=ap_m,
+            median=ap_m,
+            std=ap_s,
+            min=ap_m,
+            max=ap_m,
+            q05=float("nan"),
+            q25=float("nan"),
+            q75=float("nan"),
+            q95=float("nan"),
+        )
         rows.append(
             {
                 **clf_base,
                 "metric_name": "classifier_roc_auc_ovr_macro_cv_mean",
-                "value_mean": roc_m,
-                "value_median": roc_m,
-                "value_std": roc_s,
+                **summary_to_row_fields(roc_summary),
                 "null_value": null_v,
             }
         )
@@ -325,9 +347,7 @@ def _append_metadata_rows(
             {
                 **clf_base,
                 "metric_name": "classifier_ap_macro_cv_mean",
-                "value_mean": ap_m,
-                "value_median": ap_m,
-                "value_std": ap_s,
+                **summary_to_row_fields(ap_summary),
                 "null_value": np.nan,
             }
         )
@@ -341,7 +361,7 @@ def _append_metadata_rows(
             metric: knn_neighbors(mat, k_max, metric)[1] for metric in distance_metrics
         }
 
-    silhouette_cache: dict[tuple[str, str], tuple[float, float, float]] = {}
+    silhouette_cache: dict[tuple[str, str], DistributionSummary] = {}
     for metric in distance_metrics:
         for metadata_type, col, _, _ in metadata_specs:
             y = obs_df[col].astype(str).to_numpy()
@@ -368,54 +388,52 @@ def _append_metadata_rows(
                     "leiden_resolution": leiden_resolution,
                     "metadata_type": metadata_type,
                 }
-                sil_m, sil_med, sil_s = silhouette_cache[(metric, metadata_type)]
                 rows.append(
                     {
                         **base,
                         "metric_name": "silhouette",
-                        "value_mean": sil_m,
-                        "value_median": sil_med,
-                        "value_std": sil_s,
+                        **summary_to_row_fields(silhouette_cache[(metric, metadata_type)]),
                         "null_value": np.nan,
                     }
-                )
-                same_m, same_med, same_s = distribution_summary(
-                    _neighbor_same_label_fraction_per_cell(inverse_labels, neighbor_idx)
                 )
                 rows.append(
                     {
                         **base,
                         "metric_name": "neighbor_same_label_fraction",
-                        "value_mean": same_m,
-                        "value_median": same_med,
-                        "value_std": same_s,
+                        **summary_to_row_fields(
+                            distribution_summary(
+                                _neighbor_same_label_fraction_per_cell(
+                                    inverse_labels, neighbor_idx
+                                )
+                            )
+                        ),
                         "null_value": np.nan,
                     }
                 )
                 if metadata_type == "cell_type":
-                    ent_m, ent_med, ent_s = distribution_summary(
-                        _neighbor_label_entropy_norm_per_cell(inverse_labels, neighbor_idx)
-                    )
                     rows.append(
                         {
                             **base,
                             "metric_name": "neighbor_label_entropy_norm",
-                            "value_mean": ent_m,
-                            "value_median": ent_med,
-                            "value_std": ent_s,
+                            **summary_to_row_fields(
+                                distribution_summary(
+                                    _neighbor_label_entropy_norm_per_cell(
+                                        inverse_labels, neighbor_idx
+                                    )
+                                )
+                            ),
                             "null_value": np.nan,
                         }
-                    )
-                    ilisi_m, ilisi_med, ilisi_s = distribution_summary(
-                        _ilisi_like_score_per_cell(inverse_labels, neighbor_idx)
                     )
                     rows.append(
                         {
                             **base,
                             "metric_name": "ilisi_like_inverse_simpson",
-                            "value_mean": ilisi_m,
-                            "value_median": ilisi_med,
-                            "value_std": ilisi_s,
+                            **summary_to_row_fields(
+                                distribution_summary(
+                                    _ilisi_like_score_per_cell(inverse_labels, neighbor_idx)
+                                )
+                            ),
                             "null_value": np.nan,
                         }
                     )
@@ -431,15 +449,11 @@ def _append_metadata_rows(
                         )
                     else:
                         ari, nmi = (float("nan"), float("nan"))
-                    ari_m, ari_med, ari_s = scalar_summary(ari)
-                    nmi_m, nmi_med, nmi_s = scalar_summary(nmi)
                     rows.append(
                         {
                             **base,
                             "metric_name": "label_vs_leiden_ari",
-                            "value_mean": ari_m,
-                            "value_median": ari_med,
-                            "value_std": ari_s,
+                            **summary_to_row_fields(scalar_summary(ari)),
                             "null_value": np.nan,
                         }
                     )
@@ -447,9 +461,7 @@ def _append_metadata_rows(
                         {
                             **base,
                             "metric_name": "label_vs_leiden_nmi",
-                            "value_mean": nmi_m,
-                            "value_median": nmi_med,
-                            "value_std": nmi_s,
+                            **summary_to_row_fields(scalar_summary(nmi)),
                             "null_value": np.nan,
                         }
                     )

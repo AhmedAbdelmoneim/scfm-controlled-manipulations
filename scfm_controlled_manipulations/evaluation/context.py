@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
+        ReferenceStatsShiftCache,
+    )
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +43,7 @@ class ModelEvaluateContext:
 
     emb_ref: np.ndarray
     leiden_cache: LeidenCache = field(default_factory=LeidenCache)
+    ref_stats_cache: ReferenceStatsShiftCache | None = None
 
 
 def load_dataset_context(results_dir: Path) -> DatasetEvaluateContext:

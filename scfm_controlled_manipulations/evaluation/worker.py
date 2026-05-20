@@ -23,6 +23,9 @@ from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
     compute_cell_batch_static_rows,
 )
 from scfm_controlled_manipulations.evaluation.reference_prep import precompute_reference_leiden
+from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
+    precompute_reference_stats_shift,
+)
 
 _SHARED: SharedEvalContext | None = None
 
@@ -53,6 +56,8 @@ class SharedEvalContext:
     cache_path: Path
     cell_type_col: str | None
     batch_col: str | None
+    stats_shift_pairwise_cell_subsample_n: int
+    stats_shift_pairwise_max_pairs: int | None
     reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue]
     static_row_templates: list[list[dict[str, Any]]]
 
@@ -75,6 +80,8 @@ class SharedEvalPayload:
     cache_path: str
     cell_type_col: str | None
     batch_col: str | None
+    stats_shift_pairwise_cell_subsample_n: int
+    stats_shift_pairwise_max_pairs: int | None
 
 
 def install_shared_context(ctx: SharedEvalContext | None) -> None:
@@ -99,6 +106,8 @@ def build_shared_context(
     cache_path: Path,
     cell_type_col: str | None,
     batch_col: str | None,
+    stats_shift_pairwise_cell_subsample_n: int,
+    stats_shift_pairwise_max_pairs: int | None,
 ) -> SharedEvalContext:
     model_ctx = load_model_context(
         embeddings_root, model, ref_id, target_obs=dataset_ctx.obs.index
@@ -115,6 +124,13 @@ def build_shared_context(
         leiden_resolutions=leiden_resolutions,
         leiden_resolution_cell_batch=leiden_resolution_cell_batch,
         seed=seed,
+    )
+    model_ctx.ref_stats_cache = precompute_reference_stats_shift(
+        model_ctx,
+        dataset_ctx,
+        seed=seed,
+        pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
+        pairwise_max_pairs=stats_shift_pairwise_max_pairs,
     )
 
     reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue] = {}
@@ -176,6 +192,8 @@ def build_shared_context(
         cache_path=cache_path,
         cell_type_col=cell_type_col,
         batch_col=batch_col,
+        stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
+        stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
         reference_cache=reference_cache,
         static_row_templates=static_row_templates,
     )
@@ -207,6 +225,8 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
         cache_path=Path(payload.cache_path),
         cell_type_col=payload.cell_type_col,
         batch_col=payload.batch_col,
+        stats_shift_pairwise_cell_subsample_n=payload.stats_shift_pairwise_cell_subsample_n,
+        stats_shift_pairwise_max_pairs=payload.stats_shift_pairwise_max_pairs,
     )
     install_shared_context(shared)
 
@@ -238,4 +258,5 @@ def run_intervention_task(task: InterventionTask) -> list[pd.DataFrame]:
         batch_col=ctx.batch_col,
         leiden_resolution_cell_batch=ctx.leiden_resolution_cell_batch,
         static_row_templates=ctx.static_row_templates,
+        stats_shift_pairwise_max_pairs=ctx.stats_shift_pairwise_max_pairs,
     )
