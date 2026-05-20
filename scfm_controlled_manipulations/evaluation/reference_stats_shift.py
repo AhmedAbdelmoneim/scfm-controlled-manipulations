@@ -13,6 +13,8 @@ from scfm_controlled_manipulations.evaluation.context import (
     ModelEvaluateContext,
 )
 from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
+    _col_means_csr,
+    _col_means_dense,
     _col_variances_csr,
     _col_variances_dense,
     _pairwise_l2_dense,
@@ -30,6 +32,8 @@ class ReferenceStatsShiftCache:
 
     raw_ref_row_norms: np.ndarray
     emb_ref_row_norms: np.ndarray
+    raw_col_means: np.ndarray
+    emb_col_means: np.ndarray
     raw_col_variances: np.ndarray
     emb_col_variances: np.ndarray
     pairwise_cell_indices: np.ndarray
@@ -53,6 +57,8 @@ def precompute_reference_stats_shift(
 
     raw_ref_row_norms = _row_norms_csr(raw_ref)
     emb_ref_row_norms = np.linalg.norm(emb_ref, axis=1)
+    raw_col_means = _col_means_csr(raw_ref)
+    emb_col_means = _col_means_dense(emb_ref)
     raw_col_variances = _col_variances_csr(raw_ref)
     emb_col_variances = _col_variances_dense(emb_ref)
 
@@ -72,6 +78,8 @@ def precompute_reference_stats_shift(
     cache = ReferenceStatsShiftCache(
         raw_ref_row_norms=raw_ref_row_norms,
         emb_ref_row_norms=emb_ref_row_norms,
+        raw_col_means=raw_col_means,
+        emb_col_means=emb_col_means,
         raw_col_variances=raw_col_variances,
         emb_col_variances=emb_col_variances,
         pairwise_cell_indices=pairwise_cell_indices,

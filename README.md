@@ -86,9 +86,10 @@ ref/man pairing, preserved geometry).
 | Category | Space(s) | Metric | Description |
 |----------|----------|--------|-------------|
 | `embedding_stats` | `raw`, `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution |
+| | | `col_mean_ref` / `_man` | Per-gene / per-dim mean distribution |
 | | | `col_variance_ref` / `_man` | Per-gene / per-dim variance distribution |
 | `embedding_shift` | `raw`, `embedding` | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (all aligned cells) |
-| | | `shift_dot_with_mean` | Per-cell (man − ref) · mean shift vector |
+| | | `shift_pairwise_cosine` | Subsampled cos(shift_i, shift_j) for shift_i = man_i − ref_i |
 | | | `within_ref_pairwise_l2` | Subsampled all-pairs spread in reference |
 | | | `within_man_pairwise_l2` | Same cell subset, all-pairs spread in manipulation |
 | `knn_metrics` | `raw`, `embedding` | `knn_recall` | kNN neighborhood recall vs reference (+ permutation null) |

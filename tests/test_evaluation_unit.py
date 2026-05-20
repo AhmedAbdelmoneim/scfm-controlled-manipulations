@@ -327,7 +327,7 @@ class StatsShiftMetricsTest(unittest.TestCase):
             obs=pd.DataFrame(index=["a", "b", "c"]),
         )
 
-    def test_paired_shift_and_dot_metrics(self) -> None:
+    def test_paired_shift_and_pairwise_cosine_metrics(self) -> None:
         from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
             compute_embedding_shift,
         )
@@ -348,11 +348,12 @@ class StatsShiftMetricsTest(unittest.TestCase):
             & (df["space"] == "embedding")
         ].iloc[0]
         self.assertAlmostEqual(paired["value_mean"], 1.0, places=5)
-        dot_row = df[
-            (df["metric_name"] == "shift_dot_with_mean")
+        cos_row = df[
+            (df["metric_name"] == "shift_pairwise_cosine")
             & (df["space"] == "embedding")
         ].iloc[0]
-        self.assertGreater(dot_row["value_mean"], 0.0)
+        self.assertAlmostEqual(cos_row["value_mean"], 1.0, places=5)
+        self.assertNotIn("shift_dot_with_mean", df["metric_name"].values)
 
     def test_col_variance_distribution(self) -> None:
         from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
@@ -373,6 +374,29 @@ class StatsShiftMetricsTest(unittest.TestCase):
             & (df["space"] == "embedding")
         ].iloc[0]
         self.assertIn("value_q25", col_ref.index)
+        self.assertFalse(np.isnan(col_ref["value_mean"]))
+
+    def test_col_mean_distribution(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
+            _col_means_dense,
+            compute_embedding_stats,
+        )
+
+        bundle = self._toy_bundle()
+        expected_means = _col_means_dense(bundle.emb_ref)
+        df = compute_embedding_stats(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+        )
+        col_ref = df[
+            (df["metric_name"] == "col_mean_ref")
+            & (df["space"] == "embedding")
+        ].iloc[0]
+        self.assertAlmostEqual(col_ref["value_mean"], float(np.mean(expected_means)), places=5)
         self.assertFalse(np.isnan(col_ref["value_mean"]))
 
     def test_reference_cache_idempotent(self) -> None:
