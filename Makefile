@@ -67,7 +67,12 @@ manipulate:
 ## Paired structure metrics (raw + embedding vs reference) into results_dir/evaluation
 .PHONY: evaluate
 evaluate:
-	PYTHONUNBUFFERED=1 uv run python -m scfm_controlled_manipulations.pipeline evaluate --config $(CONFIG)
+	@scripts/run_evaluate.sh $(CONFIG)
+
+## Profile evaluate on a synthetic fixture (see scripts/benchmark_eval.py)
+.PHONY: benchmark-eval
+benchmark-eval:
+	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml
 
 
 

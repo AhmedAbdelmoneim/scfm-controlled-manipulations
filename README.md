@@ -44,6 +44,22 @@ Both use the same `CONFIG` (default `configs/default.yaml`). Evaluation hyperpar
 the top-level `evaluation:` key (see `configs/default.yaml`). Diffusion transitions are cached under
 `results_dir/evaluation_cache/`.
 
+Set `evaluation.evaluation_workers` to parallelize across interventions (e.g. `80` on a large node).
+Each worker is a **process** pinned to **one** BLAS/sklearn thread; limits are applied in
+`scripts/lib/eval_runtime_env.sh` and in Python before numpy loads. On Linux, workers default to `fork` and share read-only reference matrices via copy-on-write.
+Each fork worker runs neighbors+Leiden in a nested `spawn` subprocess so OpenMP from kNN does
+not trigger unsafe `fork()` in scanpy/igraph. Set `evaluation_mp_start_method: spawn` if issues
+persist. Diffusion pickles
+live under `evaluation_cache/` with file locking.
+
+**One atlas in the background:**
+
+```bash
+nohup scripts/run_one_evaluation.sh lung > run_logs/batch_eval_lung.log 2>&1 &
+```
+
+**Non-default venv** (once per machine): `echo .venv-05 > .python-env` or `export SCFM_UV_ENV=.venv-05`.
+
 ### Evaluation output schema
 
 Each model writes `results_dir/evaluation/{model}_metrics.csv`. Every row includes

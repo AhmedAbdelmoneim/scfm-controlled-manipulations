@@ -16,15 +16,19 @@ from sklearn.metrics import (
     silhouette_score,
 )
 from sklearn.model_selection import StratifiedKFold
+from sklearn.multiclass import OneVsRestClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, label_binarize
 
+from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.evaluation.metrics_clustering import run_leiden_labels
 from scfm_controlled_manipulations.evaluation.metrics_common import (
     distribution_summary,
     scalar_summary,
 )
 from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors
+
+KnnIndexCacheLike = Any
 
 logger = logging.getLogger(__name__)
 
@@ -103,13 +107,43 @@ def label_cluster_agreement(
     metric: str,
     resolution: float,
     seed: int,
+    leiden_cache: LeidenCache | None = None,
 ) -> tuple[float, float]:
     labels_arr = np.asarray(labels).astype(str)
-    cluster_labels = run_leiden_labels(mat, k=k, metric=metric, resolution=resolution, seed=seed)
+    cluster_labels = run_leiden_labels(
+        mat,
+        k=k,
+        metric=metric,
+        resolution=resolution,
+        seed=seed,
+        leiden_cache=leiden_cache,
+    )
     return (
         float(adjusted_rand_score(labels_arr, cluster_labels)),
         float(normalized_mutual_info_score(labels_arr, cluster_labels)),
     )
+
+
+def _cv_splits_for_labels(y: np.ndarray, n_splits: int) -> int | None:
+    """Stratified fold count that fits label counts; ``None`` if CV is not viable."""
+    y = np.asarray(y)
+    _, counts = np.unique(y, return_counts=True)
+    if len(counts) < 2:
+        return None
+    min_count = int(counts.min())
+    if min_count < 2:
+        return None
+    return min(n_splits, min_count)
+
+
+def _mask_labels_for_stratified_cv(y: np.ndarray, n_splits: int) -> np.ndarray | None:
+    """Drop classes with fewer than ``n_splits`` samples so StratifiedKFold is valid."""
+    y = np.asarray(y)
+    classes, counts = np.unique(y, return_counts=True)
+    keep_classes = classes[counts >= n_splits]
+    if len(keep_classes) < 2:
+        return None
+    return np.isin(y, keep_classes)
 
 
 def _ovr_roc_ap_cv(
@@ -120,36 +154,53 @@ def _ovr_roc_ap_cv(
     n_splits: int = 3,
 ) -> tuple[float, float, float, float]:
     """Returns mean roc_auc (ovr macro), std, mean ap (macro), std."""
+    y = np.asarray(y)
+    n_splits_eff = _cv_splits_for_labels(y, n_splits)
+    if n_splits_eff is None:
+        return float("nan"), float("nan"), float("nan"), float("nan")
+
+    keep = _mask_labels_for_stratified_cv(y, n_splits_eff)
+    if keep is None:
+        return float("nan"), float("nan"), float("nan"), float("nan")
+    x = x[keep]
+    y = y[keep]
+
     pipe = make_pipeline(
         StandardScaler(),
-        LogisticRegression(
-            max_iter=400,
-            class_weight="balanced",
-            random_state=seed,
-            multi_class="ovr",
+        OneVsRestClassifier(
+            LogisticRegression(
+                max_iter=400,
+                class_weight="balanced",
+                random_state=seed,
+            )
         ),
     )
-    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    cv = StratifiedKFold(n_splits=n_splits_eff, shuffle=True, random_state=seed)
     rocs = []
     aps = []
     for train_idx, test_idx in cv.split(x, y):
         pipe.fit(x[train_idx], y[train_idx])
-        if len(np.unique(y[test_idx])) < 2:
+        y_test = y[test_idx]
+        classes = pipe.classes_
+        if len(np.unique(y_test)) < 2 or len(np.unique(y_test)) < len(classes):
             continue
         prob = pipe.predict_proba(x[test_idx])
-        classes = pipe.classes_
-        y_test = y[test_idx]
         try:
             rocs.append(
                 roc_auc_score(y_test, prob, multi_class="ovr", average="macro", labels=classes)
             )
             y_ohe = label_binarize(y_test, classes=classes)
-            aps.append(average_precision_score(y_ohe, prob, average="macro"))
+            if y_ohe.ndim == 1:
+                y_ohe = y_ohe.reshape(-1, 1)
+            if y_ohe.shape[1] == prob.shape[1] and np.any(y_ohe):
+                aps.append(average_precision_score(y_ohe, prob, average="macro"))
         except ValueError:
             continue
     if not rocs:
         return float("nan"), float("nan"), float("nan"), float("nan")
-    return float(np.mean(rocs)), float(np.std(rocs)), float(np.mean(aps)), float(np.std(aps))
+    ap_mean = float(np.mean(aps)) if aps else float("nan")
+    ap_std = float(np.std(aps)) if aps else float("nan")
+    return float(np.mean(rocs)), float(np.std(rocs)), ap_mean, ap_std
 
 
 def _permutation_null_roc(
@@ -211,10 +262,13 @@ def _append_metadata_rows(
     intervention_name: str,
     n_cells: int,
     reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue],
+    knn_cache: KnnIndexCacheLike | None = None,
+    leiden_cache: LeidenCache | None = None,
     max_features_for_classifier: int = 2048,
 ) -> None:
     is_reference = space_label.endswith("_reference")
     run_leiden = space_label.startswith("embedding")
+    leiden_cache_for_space = leiden_cache if is_reference else None
     k_sorted = sorted(int(k) for k in k_values)
     k_max = k_sorted[-1]
 
@@ -278,9 +332,22 @@ def _append_metadata_rows(
             }
         )
 
-    neighbor_idx_by_metric: dict[str, np.ndarray] = {
-        metric: knn_neighbors(mat, k_max, metric)[1] for metric in distance_metrics
-    }
+    if knn_cache is not None:
+        neighbor_idx_by_metric = {
+            metric: knn_cache.neighbors(mat, k_max, metric)[1] for metric in distance_metrics
+        }
+    else:
+        neighbor_idx_by_metric = {
+            metric: knn_neighbors(mat, k_max, metric)[1] for metric in distance_metrics
+        }
+
+    silhouette_cache: dict[tuple[str, str], tuple[float, float, float]] = {}
+    for metric in distance_metrics:
+        for metadata_type, col, _, _ in metadata_specs:
+            y = obs_df[col].astype(str).to_numpy()
+            silhouette_cache[(metric, metadata_type)] = scalar_summary(
+                safe_silhouette(mat, y, metric=metric, seed=seed)
+            )
 
     for metric in distance_metrics:
         idx_max = neighbor_idx_by_metric[metric]
@@ -301,9 +368,7 @@ def _append_metadata_rows(
                     "leiden_resolution": leiden_resolution,
                     "metadata_type": metadata_type,
                 }
-                y = obs_df[col].astype(str).to_numpy()
-                sil = safe_silhouette(mat, y, metric=metric, seed=seed)
-                sil_m, sil_med, sil_s = scalar_summary(sil)
+                sil_m, sil_med, sil_s = silhouette_cache[(metric, metadata_type)]
                 rows.append(
                     {
                         **base,
@@ -362,6 +427,7 @@ def _append_metadata_rows(
                             metric=metric,
                             resolution=leiden_resolution,
                             seed=seed,
+                            leiden_cache=leiden_cache_for_space,
                         )
                     else:
                         ari, nmi = (float("nan"), float("nan"))
@@ -389,6 +455,68 @@ def _append_metadata_rows(
                     )
 
 
+def compute_cell_batch_static_rows(
+    *,
+    mat: Any,
+    obs_df: pd.DataFrame,
+    space_label: str,
+    dataset_id: str,
+    model: str,
+    seed: int,
+    cell_type_col: str | None,
+    batch_col: str | None,
+    k_values: list[int],
+    distance_metrics: list[str],
+    leiden_resolution: float,
+    reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue],
+    knn_cache: KnnIndexCacheLike | None,
+    leiden_cache: LeidenCache | None,
+    n_cells: int,
+) -> list[dict[str, Any]]:
+    """Metrics for a reference-only matrix (constant across interventions)."""
+    rows: list[dict[str, Any]] = []
+    logger.info("cell_type_and_batch_metrics: precomputing static space=%s", space_label)
+    _append_metadata_rows(
+        rows,
+        mat=mat,
+        obs_df=obs_df,
+        space_label=space_label,
+        cell_type_col=cell_type_col,
+        batch_col=batch_col,
+        k_values=k_values,
+        distance_metrics=distance_metrics,
+        leiden_resolution=leiden_resolution,
+        seed=seed,
+        dataset_id=dataset_id,
+        model=model,
+        intervention_id="__static__",
+        intervention_name="__static__",
+        n_cells=n_cells,
+        reference_cache=reference_cache,
+        knn_cache=knn_cache,
+        leiden_cache=leiden_cache,
+    )
+    return rows
+
+
+def stamp_cell_batch_rows(
+    rows: list[dict[str, Any]],
+    *,
+    intervention_id: str,
+    intervention_name: str,
+) -> list[dict[str, Any]]:
+    stamped: list[dict[str, Any]] = []
+    for row in rows:
+        stamped.append(
+            {
+                **row,
+                "intervention_id": intervention_id,
+                "intervention_name": intervention_name,
+            }
+        )
+    return stamped
+
+
 def compute_cell_type_and_batch_metrics(
     *,
     bundle: Any,
@@ -403,19 +531,30 @@ def compute_cell_type_and_batch_metrics(
     distance_metrics: list[str],
     leiden_resolution: float,
     reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue],
+    knn_cache: KnnIndexCacheLike | None = None,
+    static_row_templates: list[list[dict[str, Any]]] | None = None,
+    leiden_cache: LeidenCache | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     obs = bundle.obs
     n_cells = bundle.emb_ref.shape[0]
 
+    if static_row_templates:
+        for template in static_row_templates:
+            rows.extend(
+                stamp_cell_batch_rows(
+                    template,
+                    intervention_id=intervention_id,
+                    intervention_name=intervention_name,
+                )
+            )
+
     matrix_items = [
-        ("raw_reference", bundle.raw_ref),
         ("raw_manipulated", bundle.raw_man),
-        ("embedding_reference", bundle.emb_ref),
         ("embedding_manipulated", bundle.emb_man),
     ]
     logger.info(
-        "cell_type_and_batch_metrics: intervention=%s n_cells=%d (4 spaces)",
+        "cell_type_and_batch_metrics: intervention=%s n_cells=%d (2 manipulated spaces)",
         intervention_id,
         n_cells,
     )
@@ -439,6 +578,8 @@ def compute_cell_type_and_batch_metrics(
             intervention_name=intervention_name,
             n_cells=n_cells,
             reference_cache=reference_cache,
+            knn_cache=knn_cache,
+            leiden_cache=leiden_cache,
         )
 
     if not rows:

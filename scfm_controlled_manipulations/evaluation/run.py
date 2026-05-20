@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from scfm_controlled_manipulations.compute_env import apply_thread_limits
+
+apply_thread_limits(threads_per_process=1)
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
 from pathlib import Path
 import time
@@ -10,17 +15,19 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from scfm_controlled_manipulations.evaluation.data import load_aligned_bundle
-from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-    ClassifierCacheKey,
-    ClassifierCacheValue,
-    compute_cell_type_and_batch_metrics,
+from scfm_controlled_manipulations.evaluation.context import load_dataset_context
+from scfm_controlled_manipulations.evaluation.pool import (
+    evaluation_mp_context,
+    use_fork_shared_memory,
 )
-from scfm_controlled_manipulations.evaluation.metrics_clustering import compute_clustering_metrics
-from scfm_controlled_manipulations.evaluation.metrics_knn import compute_knn_metrics
-from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
-    compute_embedding_shift,
-    compute_embedding_stats,
+from scfm_controlled_manipulations.evaluation.worker import (
+    InterventionTask,
+    SharedEvalPayload,
+    build_shared_context,
+    install_shared_context,
+    run_intervention_task,
+    worker_initializer,
+    worker_initializer_spawn,
 )
 from scfm_controlled_manipulations.io import (
     embedding_path,
@@ -28,6 +35,7 @@ from scfm_controlled_manipulations.io import (
     evaluation_dir,
     evaluation_metrics_csv_path,
     intervention_id,
+    manipulation_path,
 )
 from scfm_controlled_manipulations.sweep_config import (
     expand_intervention_specs,
@@ -37,14 +45,16 @@ from scfm_controlled_manipulations.sweep_config import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION: dict[str, Any] = {
-    "k_values": [15, 30, 50],
-    "distance_metrics": ["euclidean", "cosine"],
-    "diffusion_t_values": [1, 4, 8],
+    "k_values": [15, 30],
+    "distance_metrics": ["euclidean"],
+    "diffusion_t_values": [1, 2, 3, 4, 5, 6, 7, 8],
     "leiden_resolutions": [0.5, 1.0],
     "cell_type_col": "cell_type",
     "batch_col": "batch",
     "leiden_resolution_cell_batch": 1.0,
     "dataset_id": None,
+    "evaluation_workers": 1,
+    "evaluation_mp_start_method": "fork",
 }
 
 
@@ -74,16 +84,19 @@ def _planned_interventions(
     specs: list[dict[str, Any]],
     *,
     ref_id: str,
+    results_dir: Path,
     embeddings_root: Path,
     model: str,
 ) -> list[tuple[str, str, dict[str, Any]]]:
-    """Interventions with an on-disk manipulated embedding for ``model``."""
+    """Interventions with on-disk manipulated raw data and an embedding for ``model``."""
     planned: list[tuple[str, str, dict[str, Any]]] = []
     for spec in specs:
         name = str(spec["name"])
         kwargs = dict(spec.get("kwargs") or {})
         iid = intervention_id(name, kwargs)
         if iid == ref_id:
+            continue
+        if not manipulation_path(results_dir, iid).is_file():
             continue
         if embedding_path(embeddings_root, model, iid).is_file():
             planned.append((name, iid, spec))
@@ -142,6 +155,43 @@ def append_raw_embedding_gain_rows(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, pd.DataFrame(gain_rows)], ignore_index=True)
 
 
+def _log_job_progress(
+    *,
+    completed_jobs: int,
+    total_jobs: int,
+    run_started: float,
+    knn_cache_size: int,
+    int_index: int | None = None,
+    n_planned: int | None = None,
+    iid: str | None = None,
+) -> None:
+    elapsed_run = time.perf_counter() - run_started
+    if completed_jobs <= 0 or total_jobs <= 0:
+        return
+    eta_s = elapsed_run / completed_jobs * (total_jobs - completed_jobs)
+    if int_index is not None and iid is not None and n_planned is not None:
+        logger.info(
+            "  [%d/%d] %s complete; overall %d/%d jobs (%.0f%%), ETA ~%.0f min; kNN cache=%d",
+            int_index,
+            n_planned,
+            iid,
+            completed_jobs,
+            total_jobs,
+            100.0 * completed_jobs / total_jobs,
+            eta_s / 60.0,
+            knn_cache_size,
+        )
+    else:
+        logger.info(
+            "  overall %d/%d jobs (%.0f%%), ETA ~%.0f min; kNN cache=%d",
+            completed_jobs,
+            total_jobs,
+            100.0 * completed_jobs / total_jobs,
+            eta_s / 60.0,
+            knn_cache_size,
+        )
+
+
 def run_evaluate(cfg: dict[str, Any]) -> None:
     ev = merge_evaluation_config(cfg)
     run_started = time.perf_counter()
@@ -153,6 +203,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     seed = int(cfg.get("seed", 42))
     dataset_id = _dataset_id(cfg, ev)
     cache_path = evaluation_cache_dir(results_dir)
+    evaluation_workers = max(1, int(ev.get("evaluation_workers", 1)))
+    mp_start_method = str(ev.get("evaluation_mp_start_method", "fork"))
 
     evaluation_dir(results_dir).mkdir(parents=True, exist_ok=True)
 
@@ -161,9 +213,20 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     distance_metrics = list(ev["distance_metrics"])
     diffusion_t_values = [int(t) for t in ev["diffusion_t_values"]]
     leiden_resolutions = [float(x) for x in ev["leiden_resolutions"]]
+    cell_type_col = _optional_obs_column(ev.get("cell_type_col"))
+    batch_col = _optional_obs_column(ev.get("batch_col"))
+    leiden_resolution_cell_batch = float(ev.get("leiden_resolution_cell_batch", 1.0))
 
     total_jobs = sum(
-        len(_planned_interventions(specs, ref_id=ref_id, embeddings_root=embeddings_root, model=m))
+        len(
+            _planned_interventions(
+                specs,
+                ref_id=ref_id,
+                results_dir=results_dir,
+                embeddings_root=embeddings_root,
+                model=m,
+            )
+        )
         for m in models
     )
 
@@ -173,9 +236,13 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         results_dir,
         embeddings_root,
     )
+    mp_method = evaluation_mp_context(
+        workers=evaluation_workers,
+        configured=mp_start_method,
+    ).get_start_method()
     logger.info(
         "Plan: models=%d interventions_with_embeddings=%d "
-        "(k=%s metrics=%s diffusion_t=%s leiden_res=%s cache=%s)",
+        "(k=%s metrics=%s diffusion_t=%s leiden_res=%s cache=%s workers=%d mp=%s)",
         len(models),
         total_jobs,
         k_values,
@@ -183,6 +250,22 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         diffusion_t_values,
         leiden_resolutions,
         cache_path,
+        evaluation_workers,
+        mp_method,
+    )
+    logger.info(
+        "Each worker uses 1 BLAS/sklearn thread; set evaluation.evaluation_workers up to your CPU budget. "
+        "Fork workers run Leiden in a nested spawn subprocess to avoid OpenMP+fork aborts."
+    )
+
+    logger.info("Loading shared reference raw matrix and obs (once per dataset)")
+    t0 = time.perf_counter()
+    dataset_ctx = load_dataset_context(results_dir)
+    knn_cache = dataset_ctx.knn_cache
+    logger.info(
+        "Reference raw loaded: n_cells=%d (%.1fs)",
+        dataset_ctx.n_cells,
+        time.perf_counter() - t0,
     )
 
     completed_jobs = 0
@@ -190,7 +273,11 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     for model_index, model in enumerate(models, start=1):
         model_started = time.perf_counter()
         planned = _planned_interventions(
-            specs, ref_id=ref_id, embeddings_root=embeddings_root, model=model
+            specs,
+            ref_id=ref_id,
+            results_dir=results_dir,
+            embeddings_root=embeddings_root,
+            model=model,
         )
         n_planned = len(planned)
         n_non_ref = sum(
@@ -207,167 +294,123 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             n_non_ref - n_planned,
         )
 
+        tasks = [
+            InterventionTask(int_index=idx, name=name, intervention_id=iid, n_planned=n_planned)
+            for idx, (name, iid, _spec) in enumerate(planned, start=1)
+        ]
         frames: list[pd.DataFrame] = []
-        reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue] = {}
 
-        for int_index, (name, iid, _spec) in enumerate(planned, start=1):
-            job_started = time.perf_counter()
-            logger.info(
-                "  [%d/%d] %s (%s) — loading aligned bundle",
-                int_index,
-                n_planned,
-                iid,
-                name,
+        if n_planned == 0:
+            logger.warning("No interventions to evaluate for model %s; skipping", model)
+            continue
+
+        logger.info("Preparing shared reference context for model %s", model)
+        t0 = time.perf_counter()
+        shared = build_shared_context(
+            dataset_ctx=dataset_ctx,
+            results_dir=results_dir,
+            embeddings_root=embeddings_root,
+            model=model,
+            ref_id=ref_id,
+            dataset_id=dataset_id,
+            seed=seed,
+            k_values=k_values,
+            distance_metrics=distance_metrics,
+            diffusion_t_values=diffusion_t_values,
+            leiden_resolutions=leiden_resolutions,
+            leiden_resolution_cell_batch=leiden_resolution_cell_batch,
+            cache_path=cache_path,
+            cell_type_col=cell_type_col,
+            batch_col=batch_col,
+        )
+        logger.info(
+            "Reference context ready (%.1fs; classifier cache=%d; Leiden cache=%d)",
+            time.perf_counter() - t0,
+            len(shared.reference_cache),
+            len(shared.model_ctx.leiden_cache),
+        )
+
+        pool_workers = min(evaluation_workers, n_planned)
+
+        if pool_workers <= 1:
+            install_shared_context(shared)
+            for task in tasks:
+                job_frames = run_intervention_task(task)
+                if job_frames:
+                    frames.extend(job_frames)
+                    completed_jobs += 1
+                    _log_job_progress(
+                        completed_jobs=completed_jobs,
+                        total_jobs=total_jobs,
+                        run_started=run_started,
+                        knn_cache_size=len(knn_cache),
+                    )
+        else:
+            fork_shared = use_fork_shared_memory(
+                workers=pool_workers,
+                configured=mp_start_method,
             )
-
-            try:
-                bundle = load_aligned_bundle(
-                    results_dir=results_dir,
-                    embeddings_root=embeddings_root,
+            logger.info(
+                "Running %d interventions with %d process workers (mp=%s fork shared memory=%s)",
+                n_planned,
+                pool_workers,
+                mp_method,
+                fork_shared,
+            )
+            mp_ctx = evaluation_mp_context(
+                workers=pool_workers,
+                configured=mp_start_method,
+            )
+            if fork_shared:
+                install_shared_context(shared)
+                executor_kwargs: dict[str, Any] = {
+                    "max_workers": pool_workers,
+                    "mp_context": mp_ctx,
+                    "initializer": worker_initializer,
+                }
+            else:
+                payload = SharedEvalPayload(
+                    results_dir=str(results_dir),
+                    embeddings_root=str(embeddings_root),
                     model=model,
-                    intervention_id=iid,
-                    reference_intervention_id=ref_id,
-                )
-            except FileNotFoundError as err:
-                logger.warning("  [%d/%d] %s skipped: %s", int_index, n_planned, iid, err)
-                continue
-            except ValueError as err:
-                logger.error("Alignment failed for %s: %s", iid, err)
-                raise
-
-            n_cells = bundle.emb_ref.shape[0]
-            logger.info(
-                "  [%d/%d] %s — %d cells; running metric blocks",
-                int_index,
-                n_planned,
-                iid,
-                n_cells,
-            )
-
-            t0 = time.perf_counter()
-            frames.append(
-                compute_embedding_stats(
-                    bundle=bundle,
+                    ref_id=ref_id,
                     dataset_id=dataset_id,
-                    model=model,
-                    intervention_id=iid,
-                    intervention_name=name,
                     seed=seed,
-                )
-            )
-            logger.info(
-                "  [%d/%d] %s — embedding_stats done (%.1fs)",
-                int_index,
-                n_planned,
-                iid,
-                time.perf_counter() - t0,
-            )
-
-            t0 = time.perf_counter()
-            frames.append(
-                compute_embedding_shift(
-                    bundle=bundle,
-                    dataset_id=dataset_id,
-                    model=model,
-                    intervention_id=iid,
-                    intervention_name=name,
-                    seed=seed,
-                )
-            )
-            logger.info(
-                "  [%d/%d] %s — embedding_shift done (%.1fs)",
-                int_index,
-                n_planned,
-                iid,
-                time.perf_counter() - t0,
-            )
-
-            t0 = time.perf_counter()
-            frames.append(
-                compute_knn_metrics(
-                    bundle=bundle,
-                    dataset_id=dataset_id,
-                    model=model,
-                    intervention_id=iid,
-                    intervention_name=name,
-                    seed=seed,
-                    distance_metrics=distance_metrics,
                     k_values=k_values,
+                    distance_metrics=distance_metrics,
                     diffusion_t_values=diffusion_t_values,
-                    cache_dir=cache_path,
-                )
-            )
-            logger.info(
-                "  [%d/%d] %s — knn_metrics done (%.1fs)",
-                int_index,
-                n_planned,
-                iid,
-                time.perf_counter() - t0,
-            )
-
-            t0 = time.perf_counter()
-            frames.append(
-                compute_clustering_metrics(
-                    bundle=bundle,
-                    dataset_id=dataset_id,
-                    model=model,
-                    intervention_id=iid,
-                    intervention_name=name,
-                    seed=seed,
-                    distance_metrics=distance_metrics,
-                    k_values=k_values,
                     leiden_resolutions=leiden_resolutions,
+                    leiden_resolution_cell_batch=leiden_resolution_cell_batch,
+                    cache_path=str(cache_path),
+                    cell_type_col=cell_type_col,
+                    batch_col=batch_col,
                 )
-            )
-            logger.info(
-                "  [%d/%d] %s — clustering_metrics done (%.1fs)",
-                int_index,
-                n_planned,
-                iid,
-                time.perf_counter() - t0,
-            )
+                executor_kwargs = {
+                    "max_workers": pool_workers,
+                    "mp_context": mp_ctx,
+                    "initializer": worker_initializer_spawn,
+                    "initargs": (payload,),
+                }
 
-            t0 = time.perf_counter()
-            frames.append(
-                compute_cell_type_and_batch_metrics(
-                    bundle=bundle,
-                    dataset_id=dataset_id,
-                    model=model,
-                    intervention_id=iid,
-                    intervention_name=name,
-                    seed=seed,
-                    cell_type_col=_optional_obs_column(ev.get("cell_type_col")),
-                    batch_col=_optional_obs_column(ev.get("batch_col")),
-                    k_values=k_values,
-                    distance_metrics=distance_metrics,
-                    leiden_resolution=float(ev.get("leiden_resolution_cell_batch", 1.0)),
-                    reference_cache=reference_cache,
-                )
-            )
-            logger.info(
-                "  [%d/%d] %s — cell_type_and_batch_metrics done (%.1fs)",
-                int_index,
-                n_planned,
-                iid,
-                time.perf_counter() - t0,
-            )
+            with ProcessPoolExecutor(**executor_kwargs) as pool:
+                futures = {pool.submit(run_intervention_task, task): task for task in tasks}
+                for future in as_completed(futures):
+                    task = futures[future]
+                    job_frames = future.result()
+                    if job_frames:
+                        frames.extend(job_frames)
+                        completed_jobs += 1
+                        _log_job_progress(
+                            completed_jobs=completed_jobs,
+                            total_jobs=total_jobs,
+                            run_started=run_started,
+                            knn_cache_size=len(knn_cache),
+                            int_index=task.int_index,
+                            n_planned=n_planned,
+                            iid=task.intervention_id,
+                        )
 
-            completed_jobs += 1
-            elapsed_run = time.perf_counter() - run_started
-            if completed_jobs > 0 and total_jobs > 0:
-                eta_s = elapsed_run / completed_jobs * (total_jobs - completed_jobs)
-                logger.info(
-                    "  [%d/%d] %s — intervention complete (%.1fs); "
-                    "overall %d/%d jobs (%.0f%%), ETA ~%.0f min",
-                    int_index,
-                    n_planned,
-                    iid,
-                    time.perf_counter() - job_started,
-                    completed_jobs,
-                    total_jobs,
-                    100.0 * completed_jobs / total_jobs,
-                    eta_s / 60.0,
-                )
+        install_shared_context(None)
 
         if not frames:
             logger.warning("No evaluation rows for model %s", model)
@@ -379,12 +422,15 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         out_path = evaluation_metrics_csv_path(results_dir, model)
         out_df.to_csv(out_path, index=False)
         logger.info(
-            "Model %s finished: wrote %d rows to %s (concat/write %.1fs; model total %.1f min)",
+            "Model %s finished: wrote %d rows to %s (concat/write %.1fs; model total %.1f min; "
+            "kNN cache entries=%d; Leiden ref cache=%d)",
             model,
             len(out_df),
             out_path,
             time.perf_counter() - t0,
             (time.perf_counter() - model_started) / 60.0,
+            len(knn_cache),
+            len(shared.model_ctx.leiden_cache),
         )
 
     logger.info(

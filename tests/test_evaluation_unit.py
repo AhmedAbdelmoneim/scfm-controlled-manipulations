@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
-from scfm_controlled_manipulations.evaluation.metrics_knn import knn_overlap_per_cell
+from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors, knn_overlap_per_cell
 from scfm_controlled_manipulations.io import embedding_path, manipulation_path
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
@@ -51,6 +52,106 @@ class KnnMaxSliceTest(unittest.TestCase):
         _, idx_direct = knn_neighbors(mat, k, "euclidean")
         _, idx_max = knn_neighbors(mat, 10, "euclidean")
         self.assertTrue(np.array_equal(idx_direct, idx_max[:, :k]))
+
+
+class LeidenMpSafetyTest(unittest.TestCase):
+    def test_scanpy_leiden_kwargs_uses_igraph(self) -> None:
+        from scfm_controlled_manipulations.evaluation.leiden_cache import scanpy_leiden_kwargs
+
+        kw = scanpy_leiden_kwargs()
+        self.assertEqual(kw["flavor"], "igraph")
+        self.assertIn("n_iterations", kw)
+
+    def test_fork_worker_delegates_leiden_to_spawn_pool(self) -> None:
+        from unittest import mock
+
+        import numpy as np
+
+        from scfm_controlled_manipulations.evaluation.leiden_cache import leiden_labels_for_matrix
+
+        mat = np.random.default_rng(0).standard_normal((40, 8)).astype(np.float32)
+        fake_labels = np.array(["0", "1"] * 20)
+
+        mock_pool = mock.MagicMock()
+        mock_pool.apply.return_value = fake_labels
+
+        with (
+            mock.patch(
+                "scfm_controlled_manipulations.evaluation.leiden_cache.mp.current_process"
+            ) as proc,
+            mock.patch(
+                "scfm_controlled_manipulations.evaluation.leiden_cache._ensure_leiden_isolate_pool",
+                return_value=mock_pool,
+            ),
+        ):
+            proc.return_value.name = "ForkProcess-8"
+            out = leiden_labels_for_matrix(mat, k=5, metric="euclidean", resolution=0.5, seed=0)
+
+        self.assertTrue(np.array_equal(out, fake_labels))
+        mock_pool.apply.assert_called_once()
+
+    def test_resolve_mp_start_method(self) -> None:
+        from scfm_controlled_manipulations.evaluation.pool import (
+            resolve_evaluation_mp_start_method,
+        )
+
+        self.assertEqual(
+            resolve_evaluation_mp_start_method(workers=48, configured="fork"),
+            "fork",
+        )
+        self.assertEqual(
+            resolve_evaluation_mp_start_method(workers=48, configured="spawn"),
+            "spawn",
+        )
+
+
+class OvrRocApCvTest(unittest.TestCase):
+    def test_singleton_class_returns_nan_without_warning(self) -> None:
+        import warnings
+
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import _ovr_roc_ap_cv
+
+        rng = np.random.default_rng(7)
+        x = rng.standard_normal((30, 5))
+        y = np.zeros(30, dtype=int)
+        y[-1] = 1
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            roc_m, roc_s, ap_m, ap_s = _ovr_roc_ap_cv(x, y, seed=0)
+        sklearn_msgs = [
+            w.message
+            for w in caught
+            if w.category is not DeprecationWarning
+            and "sklearn" in str(getattr(w, "filename", ""))
+        ]
+        self.assertEqual(sklearn_msgs, [])
+        self.assertTrue(np.isnan(roc_m))
+        self.assertTrue(np.isnan(ap_m))
+
+    def test_multiclass_cv_no_sklearn_warnings(self) -> None:
+        import warnings
+
+        from sklearn.datasets import make_classification
+
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import _ovr_roc_ap_cv
+
+        x, y = make_classification(
+            n_samples=120,
+            n_features=8,
+            n_informative=6,
+            n_classes=4,
+            n_clusters_per_class=1,
+            random_state=0,
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _ovr_roc_ap_cv(x, y, seed=0)
+        sklearn_msgs = [
+            w.message
+            for w in caught
+            if "sklearn" in str(getattr(w, "filename", ""))
+        ]
+        self.assertEqual(sklearn_msgs, [])
 
 
 class NeighborVectorizedTest(unittest.TestCase):
@@ -150,6 +251,40 @@ class DiffusionPermutationNullTest(unittest.TestCase):
         self.assertAlmostEqual(aligned_js, 0.0, places=5)
         self.assertGreater(null_sym, aligned_sym)
         self.assertGreater(null_js, aligned_js)
+
+
+class EmbeddingAlignmentTest(unittest.TestCase):
+    def test_dense_embedding_aligned_to_obs_reorders_rows(self) -> None:
+        import anndata as ad
+
+        from scfm_controlled_manipulations.evaluation.data import (
+            dense_embedding_aligned_to_obs,
+        )
+
+        target_obs = ["c", "a", "b"]
+        adata = ad.AnnData(
+            X=np.array([[1.0], [2.0], [3.0]], dtype=np.float32),
+            obs={"cell_id": ["a", "b", "c"]},
+        )
+        adata.obs_names = ["a", "b", "c"]
+        aligned = dense_embedding_aligned_to_obs(adata, pd.Index(target_obs), label="emb")
+        np.testing.assert_allclose(aligned.ravel(), [3.0, 1.0, 2.0])
+
+    def test_dense_embedding_aligned_to_obs_rejects_missing_cells(self) -> None:
+        import anndata as ad
+
+        from scfm_controlled_manipulations.evaluation.data import (
+            dense_embedding_aligned_to_obs,
+        )
+
+        adata = ad.AnnData(
+            X=np.array([[1.0], [2.0]], dtype=np.float32),
+            obs={"cell_id": ["a", "b"]},
+        )
+        with self.assertRaises(ValueError):
+            dense_embedding_aligned_to_obs(
+                adata, pd.Index(["a", "b", "c"]), label="emb"
+            )
 
 
 class EmbeddingShiftTest(unittest.TestCase):

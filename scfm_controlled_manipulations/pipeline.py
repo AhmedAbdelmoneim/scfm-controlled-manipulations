@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# Pin BLAS/OpenMP to 1 thread before numpy/scipy load (via anndata/scanpy).
+from scfm_controlled_manipulations.compute_env import apply_thread_limits
+
+apply_thread_limits(threads_per_process=1)
+
 import argparse
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -321,6 +326,7 @@ def _apply_and_write_manipulation(
 def _init_worker_adata(input_path: str, options: Mapping[str, Any]) -> None:
     global _WORKER_ADATA
 
+    apply_thread_limits(threads_per_process=1)
     _configure_logging(str(options.get("log_level", "INFO")))
     logger.debug("Worker loading input AnnData from %s", input_path)
     _WORKER_ADATA = ad.read_h5ad(input_path)

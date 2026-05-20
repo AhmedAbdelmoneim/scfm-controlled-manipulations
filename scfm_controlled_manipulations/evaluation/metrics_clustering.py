@@ -6,12 +6,11 @@ import logging
 import time
 from typing import Any
 
-import anndata as ad
 import numpy as np
 import pandas as pd
-import scanpy as sc
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
+from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.evaluation.metrics_common import scalar_summary
 
 logger = logging.getLogger(__name__)
@@ -24,22 +23,11 @@ def run_leiden_labels(
     metric: str,
     resolution: float,
     seed: int,
+    leiden_cache: LeidenCache | None = None,
 ) -> np.ndarray:
-    adata_tmp = ad.AnnData(mat)
-    sc.pp.neighbors(
-        adata_tmp,
-        n_neighbors=k,
-        metric=metric,
-        use_rep="X",
-        random_state=seed,
-    )
-    sc.tl.leiden(
-        adata_tmp,
-        resolution=resolution,
-        random_state=seed,
-        key_added="leiden_eval",
-    )
-    return adata_tmp.obs["leiden_eval"].astype(str).to_numpy()
+    if leiden_cache is not None:
+        return leiden_cache.labels(mat, k=k, metric=metric, resolution=resolution, seed=seed)
+    return LeidenCache().labels(mat, k=k, metric=metric, resolution=resolution, seed=seed)
 
 
 def clustering_stability(
@@ -50,9 +38,24 @@ def clustering_stability(
     metric: str,
     resolution: float,
     seed: int,
+    leiden_cache: LeidenCache | None = None,
 ) -> dict[str, float]:
-    ref_clusters = run_leiden_labels(ref_mat, k=k, metric=metric, resolution=resolution, seed=seed)
-    man_clusters = run_leiden_labels(man_mat, k=k, metric=metric, resolution=resolution, seed=seed)
+    ref_clusters = run_leiden_labels(
+        ref_mat,
+        k=k,
+        metric=metric,
+        resolution=resolution,
+        seed=seed,
+        leiden_cache=leiden_cache,
+    )
+    man_clusters = run_leiden_labels(
+        man_mat,
+        k=k,
+        metric=metric,
+        resolution=resolution,
+        seed=seed,
+        leiden_cache=None,
+    )
     return {
         "ari": float(adjusted_rand_score(ref_clusters, man_clusters)),
         "nmi": float(normalized_mutual_info_score(ref_clusters, man_clusters)),
@@ -112,6 +115,7 @@ def compute_clustering_metrics(
     distance_metrics: list[str],
     k_values: list[int],
     leiden_resolutions: list[float],
+    leiden_cache: LeidenCache | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     n_cells = bundle.emb_ref.shape[0]
@@ -140,7 +144,13 @@ def compute_clustering_metrics(
                 )
                 t0 = time.perf_counter()
                 stats = clustering_stability(
-                    ref, man, k=k, metric=metric, resolution=resolution, seed=seed
+                    ref,
+                    man,
+                    k=k,
+                    metric=metric,
+                    resolution=resolution,
+                    seed=seed,
+                    leiden_cache=leiden_cache,
                 )
                 logger.info(
                     "clustering_metrics: Leiden %d/%d done in %.1fs (ARI=%.4f NMI=%.4f)",

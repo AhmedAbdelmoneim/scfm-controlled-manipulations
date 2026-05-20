@@ -9,8 +9,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-import pickle
-import time
 from typing import Any
 
 import numpy as np
@@ -18,12 +16,20 @@ import pandas as pd
 import scipy.sparse as sp
 from sklearn.neighbors import NearestNeighbors
 
+from scfm_controlled_manipulations.evaluation.disk_cache import load_or_build_pickle
+
 logger = logging.getLogger(__name__)
 
 
-def knn_neighbors(mat: Any, k: int, metric: str) -> tuple[np.ndarray, np.ndarray]:
+def knn_neighbors(
+    mat: Any,
+    k: int,
+    metric: str,
+    *,
+    n_jobs: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
     """kNN distances and indices (excluding self), shape ``(n_cells, k)``."""
-    nn = NearestNeighbors(n_neighbors=k + 1, metric=metric).fit(mat)
+    nn = NearestNeighbors(n_neighbors=k + 1, metric=metric, n_jobs=n_jobs).fit(mat)
     dist, idx = nn.kneighbors(mat)
     return dist[:, 1:], idx[:, 1:]
 
@@ -234,41 +240,8 @@ def _load_transition_t(
         n_cells=n_cells,
         side=side,
     )
-    if path.is_file():
-        logger.debug(
-            "diffusion cache hit: %s space=%s metric=%s k=%d t=%d side=%s",
-            path.name,
-            space,
-            metric,
-            k,
-            t,
-            side,
-        )
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    logger.info(
-        "diffusion cache miss — building space=%s metric=%s k=%d t=%d side=%s (%d cells)",
-        space,
-        metric,
-        k,
-        t,
-        side,
-        n_cells,
-    )
-    t0 = time.perf_counter()
-    mat = builder()
-    logger.info(
-        "diffusion built space=%s metric=%s k=%d t=%d side=%s in %.1fs",
-        space,
-        metric,
-        k,
-        t,
-        side,
-        time.perf_counter() - t0,
-    )
-    with open(path, "wb") as f:
-        pickle.dump(mat, f, protocol=pickle.HIGHEST_PROTOCOL)
-    return mat
+    label = f"diffusion space={space} metric={metric} k={k} t={t} side={side} ({n_cells} cells)"
+    return load_or_build_pickle(path, builder, label=label)
 
 
 def _row_metric_row(
@@ -321,6 +294,7 @@ def compute_knn_metrics(
     diffusion_t_values: list[int],
     row_chunk: int = 512,
     cache_dir: Path,
+    knn_cache: Any | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     n_cells = bundle.emb_ref.shape[0]
@@ -345,17 +319,33 @@ def compute_knn_metrics(
             return bundle.raw_ref, bundle.raw_man
         return bundle.emb_ref, bundle.emb_man
 
-    for space in knn_spaces:
+    def _neighbors(mat: Any, metric: str) -> tuple[np.ndarray, np.ndarray]:
+        if knn_cache is not None:
+            return knn_cache.neighbors(mat, k_max, metric)
+        return knn_neighbors(mat, k_max, metric)
+
+    spaces_needed = tuple(dict.fromkeys((*knn_spaces, *diffusion_spaces)))
+    knn_at_max: dict[tuple[str, str], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    def _build_space_metric(space: str, metric: str) -> tuple[str, str, tuple]:
         ref_mat, man_mat = mats_for(space)
+        logger.info(
+            "knn_metrics: space=%s metric=%s — kNN graph at k_max=%d",
+            space,
+            metric,
+            k_max,
+        )
+        ref_dist_max, ref_idx_max = _neighbors(ref_mat, metric)
+        man_dist_max, man_idx_max = _neighbors(man_mat, metric)
+        return space, metric, (ref_dist_max, ref_idx_max, man_dist_max, man_idx_max)
+
+    for space, metric in ((s, m) for s in spaces_needed for m in distance_metrics):
+        s, m, payload = _build_space_metric(space, metric)
+        knn_at_max[(s, m)] = payload
+
+    for space in knn_spaces:
         for metric in distance_metrics:
-            logger.info(
-                "knn_metrics: space=%s metric=%s — kNN graph at k_max=%d",
-                space,
-                metric,
-                k_max,
-            )
-            _, ref_idx_max = knn_neighbors(ref_mat, k_max, metric)
-            _, man_idx_max = knn_neighbors(man_mat, k_max, metric)
+            _, ref_idx_max, _, man_idx_max = knn_at_max[(space, metric)]
             for k in k_sorted:
                 ref_idx = ref_idx_max[:, :k]
                 man_idx = man_idx_max[:, :k]
@@ -402,10 +392,8 @@ def compute_knn_metrics(
                 )
 
     for space in diffusion_spaces:
-        ref_mat, man_mat = mats_for(space)
         for metric in distance_metrics:
-            ref_dist_max, ref_idx_max = knn_neighbors(ref_mat, k_max, metric)
-            man_dist_max, man_idx_max = knn_neighbors(man_mat, k_max, metric)
+            ref_dist_max, ref_idx_max, man_dist_max, man_idx_max = knn_at_max[(space, metric)]
             for k in k_sorted:
                 ref_adj = build_weighted_knn_adjacency_from_knn(
                     ref_dist_max[:, :k], ref_idx_max[:, :k]

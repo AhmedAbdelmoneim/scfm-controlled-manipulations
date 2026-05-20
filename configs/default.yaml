@@ -52,3 +52,7 @@ evaluation:
   batch_col: batch
   leiden_resolution_cell_batch: 1.0
   dataset_id: null
+  # Process pool size (each worker uses 1 BLAS/sklearn thread). Diffusion matrices cache on disk.
+  evaluation_workers: 1
+  # fork | spawn | auto — fork on Linux shares reference data; workers use leidenalg for Leiden.
+  evaluation_mp_start_method: fork

@@ -17,8 +17,10 @@ classifiers = [
 ]
 dependencies = [
     "anndata",
+    "igraph>=1.0.0",
     "ipython",
     "jupyterlab",
+    "leidenalg>=0.11.0",
     "marimo>=0.23.5",
     "matplotlib",
     "mygene",
@@ -48,4 +50,9 @@ extend-select = ["I"]  # Add import sorting
 [tool.ruff.lint.isort]
 known-first-party = ["scfm_controlled_manipulations"]
 force-sort-within-sections = true
+
+[tool.ruff.lint.per-file-ignores]
+# BLAS thread env must be set before numpy/scipy import (anndata/scanpy).
+"scfm_controlled_manipulations/pipeline.py" = ["E402"]
+"scfm_controlled_manipulations/evaluation/run.py" = ["E402"]
 
