@@ -78,8 +78,10 @@ Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
 append embedding-minus-raw differences for all summary columns except `value_std` (left `NaN`).
 
 **Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, `diffusion_js`, and
-`classifier_roc_auc_ovr_macro_cv_mean` include a single-shuffle null in `null_value` (broken
-ref/man pairing, preserved geometry).
+`classifier_roc_auc_ovr_macro_cv_mean` include broken-pairing nulls in `null_value` (mean over
+cells; optional multi-shuffle average via `knn_n_null_permutations`). Diffusion uses a PHATE-style
+alpha-decay kNN kernel (`knn_alpha`, default 10); set `knn_alpha: 2` for a Gaussian-like kernel.
+Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 
 ### Evaluation metrics (by category)
 
@@ -93,8 +95,7 @@ ref/man pairing, preserved geometry).
 | | | `within_ref_pairwise_l2` | Subsampled all-pairs spread in reference |
 | | | `within_man_pairwise_l2` | Same cell subset, all-pairs spread in manipulation |
 | `knn_metrics` | `raw`, `embedding` | `knn_recall` | kNN neighborhood recall vs reference (+ permutation null) |
-| | | `knn_jaccard` | kNN Jaccard overlap vs reference |
-| | `embedding` | `diffusion_sym_kl` | Symmetric KL between kNN random-walk transitions (+ null) |
+| | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
 | | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
 | `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
 | | | `leiden_nmi` | NMI between independent Leiden clusterings |
@@ -107,7 +108,8 @@ ref/man pairing, preserved geometry).
 | | | `classifier_ap_macro_cv_mean` | OVR macro average precision (3-fold CV mean ± std) |
 
 Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
-`leiden_resolutions`, `leiden_resolution_cell_batch`, `cell_type_col`, `batch_col`, `dataset_id`,
+`knn_alpha`, `knn_bandwidth_k`, `knn_n_null_permutations`, `leiden_resolutions`,
+`leiden_resolution_cell_batch`, `cell_type_col`, `batch_col`, `dataset_id`,
 `stats_shift_pairwise_cell_subsample_n`, `stats_shift_pairwise_max_pairs`.
 
 To run a different config:

@@ -58,6 +58,9 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "evaluation_mp_start_method": "fork",
     "stats_shift_pairwise_cell_subsample_n": 500,
     "stats_shift_pairwise_max_pairs": 10_000,
+    "knn_alpha": 10.0,
+    "knn_bandwidth_k": None,
+    "knn_n_null_permutations": 1,
 }
 
 
@@ -231,6 +234,10 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     stats_shift_pairwise_max_pairs = (
         int(pairwise_max_raw) if pairwise_max_raw is not None else None
     )
+    knn_alpha = float(ev.get("knn_alpha", 10.0))
+    bw_raw = ev.get("knn_bandwidth_k")
+    knn_bandwidth_k = int(bw_raw) if bw_raw is not None else None
+    knn_n_null_permutations = max(1, int(ev.get("knn_n_null_permutations", 1)))
 
     total_jobs = sum(
         len(
@@ -339,6 +346,9 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             batch_col=batch_col,
             stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
             stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
+            knn_alpha=knn_alpha,
+            knn_bandwidth_k=knn_bandwidth_k,
+            knn_n_null_permutations=knn_n_null_permutations,
         )
         logger.info(
             "Reference context ready (%.1fs; classifier cache=%d; Leiden cache=%d; stats cache=%s)",
@@ -404,6 +414,9 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     batch_col=batch_col,
                     stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
                     stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
+                    knn_alpha=knn_alpha,
+                    knn_bandwidth_k=knn_bandwidth_k,
+                    knn_n_null_permutations=knn_n_null_permutations,
                 )
                 executor_kwargs = {
                     "max_workers": pool_workers,

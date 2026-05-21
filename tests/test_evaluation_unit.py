@@ -195,16 +195,30 @@ class KnnOverlapTest(unittest.TestCase):
         n = 10
         k = 3
         idx = np.array([np.roll(np.arange(n), -i)[:k] for i in range(n)])
-        recall, jaccard = knn_overlap_per_cell(idx, idx, k)
+        recall = knn_overlap_per_cell(idx, idx, k)
         self.assertTrue(np.allclose(recall, 1.0))
-        self.assertTrue(np.allclose(jaccard, 1.0))
 
 
-class EmpiricalKnnNullTest(unittest.TestCase):
+class KnnPermutationNullTest(unittest.TestCase):
+    def _mean_null_recall(
+        self, ref: np.ndarray, man: np.ndarray, *, k: int, metric: str, seed: int
+    ) -> float:
+        from scfm_controlled_manipulations.evaluation.metrics_knn import (
+            _knn_null_seed,
+            knn_neighbors,
+            knn_overlap_per_cell,
+        )
+
+        _, ref_idx = knn_neighbors(ref, k, metric)
+        _, man_idx = knn_neighbors(man, k, metric)
+        null_rng = np.random.default_rng(_knn_null_seed(seed, "embedding", metric, k))
+        perm = null_rng.permutation(ref.shape[0])
+        null_recall = knn_overlap_per_cell(ref_idx, man_idx[perm], k)
+        return float(np.mean(null_recall))
+
     def test_empirical_null_breaks_pairing(self) -> None:
         from scfm_controlled_manipulations.evaluation.metrics_knn import (
-            empirical_knn_recall_null,
-            knn_indices,
+            knn_neighbors,
             knn_overlap_per_cell,
         )
 
@@ -212,41 +226,40 @@ class EmpiricalKnnNullTest(unittest.TestCase):
         n, d, k = 80, 8, 5
         ref = rng.standard_normal((n, d))
         man = ref.copy()
-        _, ref_idx = knn_indices(ref, k=k, metric="euclidean")
-        _, man_idx = knn_indices(man, k=k, metric="euclidean")
-        recall, _ = knn_overlap_per_cell(ref_idx, man_idx, k)
+        _, ref_idx = knn_neighbors(ref, k, "euclidean")
+        _, man_idx = knn_neighbors(man, k, "euclidean")
+        recall = knn_overlap_per_cell(ref_idx, man_idx, k)
         self.assertGreater(float(np.mean(recall)), 0.95)
 
-        null = empirical_knn_recall_null(ref, man, k=k, metric="euclidean", seed=42)
+        null = self._mean_null_recall(ref, man, k=k, metric="euclidean", seed=42)
         self.assertLess(null, float(np.mean(recall)))
         self.assertEqual(
             null,
-            empirical_knn_recall_null(ref, man, k=k, metric="euclidean", seed=42),
+            self._mean_null_recall(ref, man, k=k, metric="euclidean", seed=42),
         )
 
     def test_empirical_null_above_analytical_with_structure(self) -> None:
         from sklearn.datasets import make_blobs
 
-        from scfm_controlled_manipulations.evaluation.metrics_knn import empirical_knn_recall_null
-
-        ref, _ = make_blobs(n_samples=5000, centers=20, n_features=32, cluster_std=1.5, random_state=0)
-        null = empirical_knn_recall_null(ref, ref.copy(), k=15, metric="euclidean", seed=0)
+        ref, _ = make_blobs(
+            n_samples=5000, centers=20, n_features=32, cluster_std=1.5, random_state=0
+        )
+        null = self._mean_null_recall(ref, ref.copy(), k=15, metric="euclidean", seed=0)
         analytical = 15 / (len(ref) - 1)
         self.assertGreater(null, analytical)
-
 
 class DiffusionPermutationNullTest(unittest.TestCase):
     def test_permutation_null_exceeds_aligned_identity(self) -> None:
         from scfm_controlled_manipulations.evaluation.metrics_knn import (
             _diffusion_sym_kl_js_means,
             build_weighted_knn_adjacency,
-            sparse_transition_power,
+            transition_powers,
         )
 
         rng = np.random.default_rng(0)
         ref = rng.standard_normal((120, 8))
         adj = build_weighted_knn_adjacency(ref, k=5, metric="euclidean")
-        p_t = sparse_transition_power(adj, t=2)
+        p_t = transition_powers(adj, [2])[2]
         q_t = p_t.copy()
         aligned_sym, aligned_js = _diffusion_sym_kl_js_means(p_t, q_t, row_chunk=64)
         perm = rng.permutation(ref.shape[0])

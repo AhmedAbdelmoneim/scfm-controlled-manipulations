@@ -46,7 +46,7 @@ models: [pca, geneformer, scconcept]
 evaluation:
   k_values: [15, 30]
   distance_metrics: [euclidean]
-  diffusion_t_values: [1, 2, 3, 4, 5, 6, 7, 8]
+  diffusion_t_values: [1, 2, 4, 8, 16, 32]
   leiden_resolutions: [0.5, 1.0]
   cell_type_col: cell_type
   batch_col: batch
@@ -59,3 +59,7 @@ evaluation:
   # Within-ref / within-man pairwise spread only (cell subsample then all-pairs).
   stats_shift_pairwise_cell_subsample_n: 500
   stats_shift_pairwise_max_pairs: 10000
+  # PHATE-style diffusion kernel (alpha=2 approximates Gaussian); clear evaluation_cache after changes
+  knn_alpha: 10.0
+  knn_bandwidth_k: null
+  knn_n_null_permutations: 1

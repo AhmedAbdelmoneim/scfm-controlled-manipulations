@@ -58,6 +58,9 @@ class SharedEvalContext:
     batch_col: str | None
     stats_shift_pairwise_cell_subsample_n: int
     stats_shift_pairwise_max_pairs: int | None
+    knn_alpha: float
+    knn_bandwidth_k: int | None
+    knn_n_null_permutations: int
     reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue]
     static_row_templates: list[list[dict[str, Any]]]
 
@@ -82,6 +85,9 @@ class SharedEvalPayload:
     batch_col: str | None
     stats_shift_pairwise_cell_subsample_n: int
     stats_shift_pairwise_max_pairs: int | None
+    knn_alpha: float
+    knn_bandwidth_k: int | None
+    knn_n_null_permutations: int
 
 
 def install_shared_context(ctx: SharedEvalContext | None) -> None:
@@ -108,6 +114,9 @@ def build_shared_context(
     batch_col: str | None,
     stats_shift_pairwise_cell_subsample_n: int,
     stats_shift_pairwise_max_pairs: int | None,
+    knn_alpha: float,
+    knn_bandwidth_k: int | None,
+    knn_n_null_permutations: int,
 ) -> SharedEvalContext:
     model_ctx = load_model_context(
         embeddings_root, model, ref_id, target_obs=dataset_ctx.obs.index
@@ -194,6 +203,9 @@ def build_shared_context(
         batch_col=batch_col,
         stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
         stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
+        knn_alpha=knn_alpha,
+        knn_bandwidth_k=knn_bandwidth_k,
+        knn_n_null_permutations=knn_n_null_permutations,
         reference_cache=reference_cache,
         static_row_templates=static_row_templates,
     )
@@ -227,6 +239,9 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
         batch_col=payload.batch_col,
         stats_shift_pairwise_cell_subsample_n=payload.stats_shift_pairwise_cell_subsample_n,
         stats_shift_pairwise_max_pairs=payload.stats_shift_pairwise_max_pairs,
+        knn_alpha=payload.knn_alpha,
+        knn_bandwidth_k=payload.knn_bandwidth_k,
+        knn_n_null_permutations=payload.knn_n_null_permutations,
     )
     install_shared_context(shared)
 
@@ -259,4 +274,7 @@ def run_intervention_task(task: InterventionTask) -> list[pd.DataFrame]:
         leiden_resolution_cell_batch=ctx.leiden_resolution_cell_batch,
         static_row_templates=ctx.static_row_templates,
         stats_shift_pairwise_max_pairs=ctx.stats_shift_pairwise_max_pairs,
+        knn_alpha=ctx.knn_alpha,
+        knn_bandwidth_k=ctx.knn_bandwidth_k,
+        knn_n_null_permutations=ctx.knn_n_null_permutations,
     )

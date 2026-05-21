@@ -55,6 +55,9 @@ def evaluate_intervention(
     leiden_resolution_cell_batch: float,
     static_row_templates: list[list[dict[str, Any]]],
     stats_shift_pairwise_max_pairs: int | None = None,
+    knn_alpha: float = 10.0,
+    knn_bandwidth_k: int | None = None,
+    knn_n_null_permutations: int = 1,
 ) -> list[pd.DataFrame]:
     job_started = time.perf_counter()
     logger.info(
@@ -147,6 +150,9 @@ def evaluate_intervention(
             diffusion_t_values=diffusion_t_values,
             cache_dir=cache_path,
             knn_cache=knn_cache,
+            alpha=knn_alpha,
+            bandwidth_k=knn_bandwidth_k,
+            n_null_permutations=knn_n_null_permutations,
         )
     )
     logger.info(
