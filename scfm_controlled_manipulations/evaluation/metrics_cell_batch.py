@@ -11,7 +11,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     adjusted_rand_score,
     average_precision_score,
-    normalized_mutual_info_score,
     roc_auc_score,
     silhouette_score,
 )
@@ -110,7 +109,7 @@ def label_cluster_agreement(
     resolution: float,
     seed: int,
     leiden_cache: LeidenCache | None = None,
-) -> tuple[float, float]:
+) -> float:
     labels_arr = np.asarray(labels).astype(str)
     cluster_labels = run_leiden_labels(
         mat,
@@ -120,10 +119,7 @@ def label_cluster_agreement(
         seed=seed,
         leiden_cache=leiden_cache,
     )
-    return (
-        float(adjusted_rand_score(labels_arr, cluster_labels)),
-        float(normalized_mutual_info_score(labels_arr, cluster_labels)),
-    )
+    return float(adjusted_rand_score(labels_arr, cluster_labels))
 
 
 def _cv_splits_for_labels(y: np.ndarray, n_splits: int) -> int | None:
@@ -438,7 +434,7 @@ def _append_metadata_rows(
                         }
                     )
                     if x_leiden is not None:
-                        ari, nmi = label_cluster_agreement(
+                        ari = label_cluster_agreement(
                             x_leiden,
                             y,
                             k=k,
@@ -448,20 +444,12 @@ def _append_metadata_rows(
                             leiden_cache=leiden_cache_for_space,
                         )
                     else:
-                        ari, nmi = (float("nan"), float("nan"))
+                        ari = float("nan")
                     rows.append(
                         {
                             **base,
                             "metric_name": "label_vs_leiden_ari",
                             **summary_to_row_fields(scalar_summary(ari)),
-                            "null_value": np.nan,
-                        }
-                    )
-                    rows.append(
-                        {
-                            **base,
-                            "metric_name": "label_vs_leiden_nmi",
-                            **summary_to_row_fields(scalar_summary(nmi)),
                             "null_value": np.nan,
                         }
                     )

@@ -71,7 +71,7 @@ Additional columns depend on the category (`distance_metric`, `k`, `diffusion_t`
 
 **Summary columns:** For distribution-based metrics, the `value_*` columns summarize a per-cell (or
 per-dimension / per-pair) array: mean, median, sample std, min, max, and quantiles (5/25/75/95%).
-Global metrics (silhouette, Leiden ARI/NMI) set quantiles and often `value_std` to `NaN`.
+Global metrics (silhouette, Leiden ARI) set quantiles and often `value_std` to `NaN`.
 Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
 
 **Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
@@ -98,12 +98,11 @@ Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 | | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
 | | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
 | `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
-| | | `leiden_nmi` | NMI between independent Leiden clusterings |
 | `cell_type_and_batch_metrics` | `raw_reference`, `raw_manipulated`, `embedding_reference`, `embedding_manipulated` | `silhouette` | Label silhouette (global; std `NaN`) |
 | | | `neighbor_same_label_fraction` | Fraction of kNN neighbors sharing label (per-cell dist.) |
 | | | `neighbor_label_entropy_norm` | Normalized neighbor-label entropy (cell types only) |
 | | | `ilisi_like_inverse_simpson` | Inverse Simpson index of neighbor labels (cell types only) |
-| | | `label_vs_leiden_ari` / `_nmi` | Agreement between labels and Leiden clusters (**embedding** only) |
+| | | `label_vs_leiden_ari` | Agreement between labels and Leiden clusters (**embedding** only) |
 | | | `classifier_roc_auc_ovr_macro_cv_mean` | OVR macro ROC-AUC (3-fold CV mean ± std; permutation null) |
 | | | `classifier_ap_macro_cv_mean` | OVR macro average precision (3-fold CV mean ± std) |
 

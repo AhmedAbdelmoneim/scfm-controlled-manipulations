@@ -44,10 +44,10 @@ models: [pca, geneformer, scconcept]
 
 # Structure evaluation (``make evaluate``): paired raw + embedding vs reference per manipulation.
 evaluation:
-  k_values: [15, 30]
+  k_values: [5, 15, 50]
   distance_metrics: [euclidean]
   diffusion_t_values: [1, 2, 4, 8, 16, 32]
-  leiden_resolutions: [0.5, 1.0]
+  leiden_resolutions: [0.25, 0.5, 1.0, 2.0]
   cell_type_col: cell_type
   batch_col: batch
   leiden_resolution_cell_batch: 1.0

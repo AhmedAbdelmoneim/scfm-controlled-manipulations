@@ -1,4 +1,4 @@
-"""Leiden clustering stability on embeddings: independent clustering on ref vs manip, ARI/NMI."""
+"""Leiden clustering stability on embeddings: independent clustering on ref vs manip, ARI."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+from sklearn.metrics import adjusted_rand_score
 
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.evaluation.metrics_common import (
@@ -62,7 +62,6 @@ def clustering_stability(
     )
     return {
         "ari": float(adjusted_rand_score(ref_clusters, man_clusters)),
-        "nmi": float(normalized_mutual_info_score(ref_clusters, man_clusters)),
         "n_ref_clusters": float(len(np.unique(ref_clusters))),
         "n_manip_clusters": float(len(np.unique(man_clusters))),
     }
@@ -134,14 +133,6 @@ def compute_clustering_metrics(
         for k in k_values:
             for resolution in leiden_resolutions:
                 job_i += 1
-                logger.info(
-                    "clustering_metrics: Leiden %d/%d metric=%s k=%d resolution=%s",
-                    job_i,
-                    n_jobs,
-                    metric,
-                    k,
-                    resolution,
-                )
                 t0 = time.perf_counter()
                 stats = clustering_stability(
                     ref,
@@ -153,33 +144,28 @@ def compute_clustering_metrics(
                     leiden_cache=leiden_cache,
                 )
                 logger.info(
-                    "clustering_metrics: Leiden %d/%d done in %.1fs (ARI=%.4f NMI=%.4f)",
+                    "clustering_metrics: Leiden %d/%d done in %.1fs (ARI=%.4f)",
                     job_i,
                     n_jobs,
                     time.perf_counter() - t0,
                     stats["ari"],
-                    stats["nmi"],
                 )
-                for mn, val in (
-                    ("leiden_ari", stats["ari"]),
-                    ("leiden_nmi", stats["nmi"]),
-                ):
-                    rows.append(
-                        _row(
-                            dataset_id=dataset_id,
-                            model=model,
-                            intervention_id=intervention_id,
-                            intervention_name=intervention_name,
-                            distance_metric=metric,
-                            k=k,
-                            resolution=resolution,
-                            metric_name=mn,
-                            summary=scalar_summary(val),
-                            n_cells=n_cells,
-                            seed=seed,
-                            n_ref_clusters=stats["n_ref_clusters"],
-                            n_manip_clusters=stats["n_manip_clusters"],
-                        )
+                rows.append(
+                    _row(
+                        dataset_id=dataset_id,
+                        model=model,
+                        intervention_id=intervention_id,
+                        intervention_name=intervention_name,
+                        distance_metric=metric,
+                        k=k,
+                        resolution=resolution,
+                        metric_name="leiden_ari",
+                        summary=scalar_summary(stats["ari"]),
+                        n_cells=n_cells,
+                        seed=seed,
+                        n_ref_clusters=stats["n_ref_clusters"],
+                        n_manip_clusters=stats["n_manip_clusters"],
                     )
+                )
 
     return pd.DataFrame(rows)
