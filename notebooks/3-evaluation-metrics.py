@@ -78,7 +78,10 @@ def _(Path, evaluation_cache_dir):
     cfg_stats_shift_pairwise_max_pairs = 10_000
     cfg_k_values = [15, 30]
     cfg_distance_metrics = ["euclidean"]
-    cfg_diffusion_t_values = [1, 2, 3, 4, 5, 6, 7, 8]
+    cfg_diffusion_t_values = [1, 2, 4, 8, 16, 32]
+    cfg_knn_alpha = 10.0
+    cfg_knn_bandwidth_k = None
+    cfg_knn_n_null_permutations = 1
     cfg_eval_cache_dir = evaluation_cache_dir(
         cfg_base_dir / cfg_atlas / "results"
     )
@@ -89,6 +92,9 @@ def _(Path, evaluation_cache_dir):
         cfg_distance_metrics,
         cfg_eval_cache_dir,
         cfg_intervention_family,
+        cfg_knn_alpha,
+        cfg_knn_bandwidth_k,
+        cfg_knn_n_null_permutations,
         cfg_k_values,
         cfg_model,
         cfg_seed,
@@ -342,30 +348,29 @@ def _(
             for dm in distance_metrics:
                 for k in k_values:
                     for space in ("raw", "embedding"):
-                        for label, name in (("knn_recall", "knn_recall"), ("knn_jaccard", "knn_jaccard")):
-                            rows.append({
-                                **base,
-                                "space": space,
-                                "metric": label,
-                                "distance_metric": dm,
-                                "k": int(k),
-                                "diffusion_t": np.nan,
-                                "value_mean": lookup_metric_row(
-                                    metrics_df, mid, metric_category="knn_metrics",
-                                    metric_name=name, space=space,
-                                    distance_metric=dm, k=int(k), diffusion_t=None,
-                                ),
-                                "value_std": lookup_metric_row(
-                                    metrics_df, mid, metric_category="knn_metrics",
-                                    metric_name=name, space=space, field="value_std",
-                                    distance_metric=dm, k=int(k), diffusion_t=None,
-                                ),
-                                "null_value": lookup_metric_row(
-                                    metrics_df, mid, metric_category="knn_metrics",
-                                    metric_name=name, space=space, field="null_value",
-                                    distance_metric=dm, k=int(k), diffusion_t=None,
-                                ),
-                            })
+                        rows.append({
+                            **base,
+                            "space": space,
+                            "metric": "knn_recall",
+                            "distance_metric": dm,
+                            "k": int(k),
+                            "diffusion_t": np.nan,
+                            "value_mean": lookup_metric_row(
+                                metrics_df, mid, metric_category="knn_metrics",
+                                metric_name="knn_recall", space=space,
+                                distance_metric=dm, k=int(k), diffusion_t=None,
+                            ),
+                            "value_std": lookup_metric_row(
+                                metrics_df, mid, metric_category="knn_metrics",
+                                metric_name="knn_recall", space=space, field="value_std",
+                                distance_metric=dm, k=int(k), diffusion_t=None,
+                            ),
+                            "null_value": lookup_metric_row(
+                                metrics_df, mid, metric_category="knn_metrics",
+                                metric_name="knn_recall", space=space, field="null_value",
+                                distance_metric=dm, k=int(k), diffusion_t=None,
+                            ),
+                        })
                     for t in diffusion_t_values:
                         for label, name in (
                             ("diffusion_sym_kl", "diffusion_sym_kl"),
@@ -464,16 +469,14 @@ def _(intervention_param_columns, np, pd, plt):
 
     def plot_knn_overlap(df_tidy, k_values):
         x_col = x_col_from_df(df_tidy)
-        overlap = df_tidy[df_tidy["metric"].isin(("knn_recall", "knn_jaccard"))]
+        overlap = df_tidy[df_tidy["metric"] == "knn_recall"]
         for k in k_values:
             for space in ("raw", "embedding"):
-                fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-                fig.suptitle(f"kNN overlap — {space}, k={k}", y=1.02)
-                for ax, metric in zip(axes, ("knn_recall", "knn_jaccard")):
-                    sub = overlap[(overlap["space"] == space) & (overlap["metric"] == metric) & (overlap["k"] == k)]
-                    grouped_bars_with_errors(ax, sub, x_col)
-                    ax.set_title(metric)
-                    ax.set_ylabel("value_mean")
+                fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+                fig.suptitle(f"kNN recall — {space}, k={k}", y=1.02)
+                sub = overlap[(overlap["space"] == space) & (overlap["k"] == k)]
+                grouped_bars_with_errors(ax, sub, x_col)
+                ax.set_ylabel("value_mean")
                 plt.tight_layout()
                 plt.show()
 
@@ -595,6 +598,9 @@ def _(
     cfg_distance_metrics,
     cfg_eval_cache_dir,
     cfg_intervention_family,
+    cfg_knn_alpha,
+    cfg_knn_bandwidth_k,
+    cfg_knn_n_null_permutations,
     cfg_k_values,
     cfg_model,
     cfg_seed,
@@ -621,6 +627,9 @@ def _(
         diffusion_t_values=cfg_diffusion_t_values,
         cache_dir=cfg_eval_cache_dir,
         knn_cache=notebook_dataset_ctx.knn_cache,
+        alpha=cfg_knn_alpha,
+        bandwidth_k=cfg_knn_bandwidth_k,
+        n_null_permutations=cfg_knn_n_null_permutations,
     )
     print("knn:", sorted(df_knn_metrics["metric_name"].unique()))
     return (df_knn_metrics,)

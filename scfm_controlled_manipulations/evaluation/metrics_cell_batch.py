@@ -25,6 +25,42 @@ def _obs_col_present(obs_df: pd.DataFrame, col: str | None) -> bool:
     return col is not None and col in obs_df.columns
 
 
+def log_cell_batch_obs_columns(
+    obs_df: pd.DataFrame,
+    *,
+    cell_type_col: str | None,
+    batch_col: str | None,
+) -> None:
+    """Log whether configured cell-type / batch columns exist in reference ``obs`` (once per dataset)."""
+    if cell_type_col is None and batch_col is None:
+        logger.info("cell_type_and_batch_metrics: disabled in config (no column names)")
+        return
+    if cell_type_col is not None:
+        if _obs_col_present(obs_df, cell_type_col):
+            logger.info(
+                "cell_type_and_batch_metrics: cell_type column %r found in reference obs",
+                cell_type_col,
+            )
+        else:
+            logger.info(
+                "cell_type_and_batch_metrics: cell_type column %r not in reference obs "
+                "(cell_type_asw skipped)",
+                cell_type_col,
+            )
+    if batch_col is not None:
+        if _obs_col_present(obs_df, batch_col):
+            logger.info(
+                "cell_type_and_batch_metrics: batch column %r found in reference obs",
+                batch_col,
+            )
+        else:
+            logger.info(
+                "cell_type_and_batch_metrics: batch column %r not in reference obs "
+                "(batch_ilisi skipped)",
+                batch_col,
+            )
+
+
 def _as_dense_embedding(mat: Any) -> np.ndarray:
     if hasattr(mat, "todense"):
         return np.asarray(mat.todense(), dtype=np.float32)
