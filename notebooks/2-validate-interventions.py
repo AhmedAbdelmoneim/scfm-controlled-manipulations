@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.6"
 app = marimo.App()
 
 
@@ -28,10 +28,10 @@ def _():
     plt.rcParams["figure.figsize"] = (8, 4.5)
 
     MANIP_DIR = Path(
-        "/vault/amoneim/scfm-controlled-manipulations/results/tabula_sapiens_kidney/manipulations"
+        "/vault/amoneim/scfm-controlled-manipulations/processed/tabula_sapiens/results/manipulations"
     )
     REF_PATH = Path(
-        "/vault/amoneim/scfm-controlled-manipulations/raw_datasets/tabula_sapiens_kidney.h5ad"
+        "/vault/amoneim/scfm-controlled-manipulations/raw_datasets/tabula_sapiens.h5ad"
     )
     return MANIP_DIR, REF_PATH, ad, mo, np, pd, plt, sns, sp
 
@@ -164,16 +164,16 @@ def _(ad, by_family, np, plt, ref, sp):
             param_val = params.get(param_key)
             ngenes = np.asarray((a.X > 0).sum(axis=1)).flatten() if sp.issparse(a.X) else (a.X > 0).sum(axis=1)
             points.append((param_val, float(np.median(ngenes))))
-    
+
         # Reference baseline
         ref_ngenes = np.asarray((ref.X > 0).sum(axis=1)).flatten() if sp.issparse(ref.X) else (ref.X > 0).sum(axis=1)
         ax.axhline(np.median(ref_ngenes), color="k", ls="--", label="reference")
-    
+
         if points:
             points.sort()
             xs, ys = zip(*points)
             ax.plot(xs, ys, "o-", lw=2, ms=8)
-    
+
         ax.set_xlabel(param_key)
         ax.set_ylabel("median detected genes per cell")
         ax.set_title(family)
