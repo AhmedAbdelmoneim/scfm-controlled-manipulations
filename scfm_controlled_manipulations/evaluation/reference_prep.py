@@ -17,11 +17,10 @@ def precompute_reference_leiden(
     k_values: list[int],
     distance_metrics: list[str],
     leiden_resolutions: list[float],
-    leiden_resolution_cell_batch: float,
     seed: int,
 ) -> None:
     """Warm Leiden neighbor graphs and labels on the reference embedding (single-threaded)."""
-    resolutions = sorted(set(leiden_resolutions) | {leiden_resolution_cell_batch})
+    resolutions = sorted(set(leiden_resolutions))
     jobs = [
         (metric, int(k), float(resolution))
         for metric in distance_metrics

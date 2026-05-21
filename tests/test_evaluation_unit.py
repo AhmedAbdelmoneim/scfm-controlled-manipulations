@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from pathlib import Path
 
 import numpy as np
@@ -106,88 +107,152 @@ class LeidenMpSafetyTest(unittest.TestCase):
         )
 
 
-class OvrRocApCvTest(unittest.TestCase):
-    def test_singleton_class_returns_nan_without_warning(self) -> None:
-        import warnings
+class ScibCellBatchTest(unittest.TestCase):
+    @staticmethod
+    def _toy_bundle(n: int = 80) -> Any:
+        from types import SimpleNamespace
 
-        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import _ovr_roc_ap_cv
-
-        rng = np.random.default_rng(7)
-        x = rng.standard_normal((30, 5))
-        y = np.zeros(30, dtype=int)
-        y[-1] = 1
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            roc_m, roc_s, ap_m, ap_s = _ovr_roc_ap_cv(x, y, seed=0)
-        sklearn_msgs = [
-            w.message
-            for w in caught
-            if w.category is not DeprecationWarning
-            and "sklearn" in str(getattr(w, "filename", ""))
-        ]
-        self.assertEqual(sklearn_msgs, [])
-        self.assertTrue(np.isnan(roc_m))
-        self.assertTrue(np.isnan(ap_m))
-
-    def test_multiclass_cv_no_sklearn_warnings(self) -> None:
-        import warnings
-
-        from sklearn.datasets import make_classification
-
-        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import _ovr_roc_ap_cv
-
-        x, y = make_classification(
-            n_samples=120,
-            n_features=8,
-            n_informative=6,
-            n_classes=4,
-            n_clusters_per_class=1,
-            random_state=0,
+        rng = np.random.default_rng(11)
+        emb = rng.standard_normal((n, 12)).astype(np.float32)
+        obs = pd.DataFrame(
+            {
+                "cell_type": rng.choice(["A", "B"], size=n),
+                "batch": rng.choice(["b1", "b2"], size=n),
+            }
         )
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _ovr_roc_ap_cv(x, y, seed=0)
-        sklearn_msgs = [
-            w.message
-            for w in caught
-            if "sklearn" in str(getattr(w, "filename", ""))
-        ]
-        self.assertEqual(sklearn_msgs, [])
+        raw = sp.csr_matrix(rng.standard_normal((n, 5)).astype(np.float32))
+        return SimpleNamespace(
+            raw_ref=raw,
+            raw_man=raw.copy(),
+            emb_ref=emb,
+            emb_man=emb + 0.01,
+            obs=obs,
+        )
 
+    def test_asw_and_ilisi_when_columns_present(self) -> None:
+        from unittest import mock
 
-class NeighborVectorizedTest(unittest.TestCase):
-    def test_entropy_and_ilisi_match_loop_reference(self) -> None:
+        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
         from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-            _encode_labels,
-            _ilisi_like_score_per_cell,
-            _neighbor_label_entropy_norm_per_cell,
+            compute_cell_type_and_batch_metrics,
         )
-        from scfm_controlled_manipulations.evaluation.metrics_common import distribution_summary
 
-        rng = np.random.default_rng(3)
-        labels = rng.integers(0, 4, size=60)
-        inverse, _ = _encode_labels(labels.astype(str))
-        neighbor_idx = rng.integers(0, 60, size=(60, 8))
+        with (
+            mock.patch.object(mcb.scib.metrics, "silhouette", return_value=0.4),
+            mock.patch.object(mcb.scib.metrics, "ilisi_graph", return_value=0.6),
+        ):
+            bundle = self._toy_bundle()
+            df = compute_cell_type_and_batch_metrics(
+                bundle=bundle,
+                dataset_id="toy",
+                model="m",
+                intervention_id="i1",
+                intervention_name="n",
+                seed=0,
+                cell_type_col="cell_type",
+                batch_col="batch",
+                k_values=[15],
+                distance_metrics=["euclidean"],
+            )
+            manip = df[df["space"] == "embedding_manipulated"]
+            names = set(manip["metric_name"])
+            self.assertEqual(names, {"cell_type_asw", "batch_ilisi"})
+            for _, row in manip.iterrows():
+                self.assertFalse(np.isnan(row["value_mean"]))
 
-        def _entropy_loop(inv: np.ndarray, idx: np.ndarray) -> float:
-            n_labels = int(inv.max()) + 1
-            ent = []
-            for row in idx:
-                counts = np.bincount(inv[row], minlength=n_labels).astype(float)
-                probs = counts / counts.sum()
-                p = probs[probs > 0]
-                ent.append(float(-np.sum(p * np.log(p))))
-            return float(np.mean(ent) / np.log(n_labels))
+    def test_skips_batch_metrics_without_batch_col(self) -> None:
+        from unittest import mock
 
-        ent_summary = distribution_summary(
-            _neighbor_label_entropy_norm_per_cell(inverse, neighbor_idx)
+        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_type_and_batch_metrics,
         )
-        self.assertAlmostEqual(ent_summary.mean, _entropy_loop(inverse, neighbor_idx), places=10)
-        ilisi_summary = distribution_summary(
-            _ilisi_like_score_per_cell(inverse, neighbor_idx)
+
+        with mock.patch.object(mcb.scib.metrics, "silhouette", return_value=0.4):
+            bundle = self._toy_bundle()
+            df = compute_cell_type_and_batch_metrics(
+                bundle=bundle,
+                dataset_id="toy",
+                model="m",
+                intervention_id="i1",
+                intervention_name="n",
+                seed=0,
+                cell_type_col="cell_type",
+                batch_col=None,
+                k_values=[15],
+                distance_metrics=["euclidean"],
+            )
+            manip = df[df["space"] == "embedding_manipulated"]
+            self.assertEqual(set(manip["metric_name"]), {"cell_type_asw"})
+
+    def test_skips_cell_type_metrics_without_cell_type_col(self) -> None:
+        from unittest import mock
+
+        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_type_and_batch_metrics,
         )
-        ilisi_m = ilisi_summary.mean
-        self.assertGreater(ilisi_m, 0.0)
+
+        with mock.patch.object(mcb.scib.metrics, "ilisi_graph", return_value=0.6):
+            bundle = self._toy_bundle()
+            df = compute_cell_type_and_batch_metrics(
+                bundle=bundle,
+                dataset_id="toy",
+                model="m",
+                intervention_id="i1",
+                intervention_name="n",
+                seed=0,
+                cell_type_col=None,
+                batch_col="batch",
+                k_values=[15],
+                distance_metrics=["euclidean"],
+            )
+            manip = df[df["space"] == "embedding_manipulated"]
+            self.assertEqual(set(manip["metric_name"]), {"batch_ilisi"})
+
+    def test_reference_rows_stamped_from_template(self) -> None:
+        from unittest import mock
+
+        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_batch_reference_rows,
+            compute_cell_type_and_batch_metrics,
+        )
+
+        with (
+            mock.patch.object(mcb.scib.metrics, "silhouette", return_value=0.4),
+            mock.patch.object(mcb.scib.metrics, "ilisi_graph", return_value=0.6),
+        ):
+            bundle = self._toy_bundle(n=60)
+            template = compute_cell_batch_reference_rows(
+                mat=bundle.emb_ref,
+                obs_df=bundle.obs,
+                space_label="embedding_reference",
+                dataset_id="toy",
+                model="m",
+                seed=0,
+                cell_type_col="cell_type",
+                batch_col="batch",
+                k_values=[15],
+                distance_metrics=["euclidean"],
+                n_cells=60,
+            )
+            df = compute_cell_type_and_batch_metrics(
+                bundle=bundle,
+                dataset_id="toy",
+                model="m",
+                intervention_id="i1",
+                intervention_name="n",
+                seed=0,
+                cell_type_col="cell_type",
+                batch_col="batch",
+                k_values=[15],
+                distance_metrics=["euclidean"],
+                static_row_templates=[template],
+            )
+            ref = df[df["space"] == "embedding_reference"]
+            self.assertTrue((ref["intervention_id"] == "i1").all())
+            self.assertGreaterEqual(len(ref), 2)
 
 
 class KnnOverlapTest(unittest.TestCase):

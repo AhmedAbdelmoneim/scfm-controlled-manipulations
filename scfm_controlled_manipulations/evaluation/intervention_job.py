@@ -16,8 +16,6 @@ from scfm_controlled_manipulations.evaluation.context import (
 )
 from scfm_controlled_manipulations.evaluation.knn_cache import KnnIndexCache
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-    ClassifierCacheKey,
-    ClassifierCacheValue,
     compute_cell_type_and_batch_metrics,
 )
 from scfm_controlled_manipulations.evaluation.metrics_clustering import compute_clustering_metrics
@@ -49,10 +47,8 @@ def evaluate_intervention(
     leiden_resolutions: list[float],
     cache_path: Path,
     knn_cache: KnnIndexCache,
-    reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue],
     cell_type_col: str | None,
     batch_col: str | None,
-    leiden_resolution_cell_batch: float,
     static_row_templates: list[list[dict[str, Any]]],
     stats_shift_pairwise_max_pairs: int | None = None,
     knn_alpha: float = 10.0,
@@ -199,11 +195,7 @@ def evaluate_intervention(
             batch_col=batch_col,
             k_values=k_values,
             distance_metrics=distance_metrics,
-            leiden_resolution=leiden_resolution_cell_batch,
-            reference_cache=reference_cache,
-            knn_cache=knn_cache,
             static_row_templates=static_row_templates or None,
-            leiden_cache=model_ctx.leiden_cache,
         )
     )
     logger.info(

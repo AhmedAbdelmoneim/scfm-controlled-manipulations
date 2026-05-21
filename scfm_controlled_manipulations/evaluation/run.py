@@ -52,7 +52,6 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "leiden_resolutions": [0.5, 1.0],
     "cell_type_col": "cell_type",
     "batch_col": "batch",
-    "leiden_resolution_cell_batch": 1.0,
     "dataset_id": None,
     "evaluation_workers": 1,
     "evaluation_mp_start_method": "fork",
@@ -226,7 +225,6 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     leiden_resolutions = [float(x) for x in ev["leiden_resolutions"]]
     cell_type_col = _optional_obs_column(ev.get("cell_type_col"))
     batch_col = _optional_obs_column(ev.get("batch_col"))
-    leiden_resolution_cell_batch = float(ev.get("leiden_resolution_cell_batch", 1.0))
     stats_shift_pairwise_cell_subsample_n = int(
         ev.get("stats_shift_pairwise_cell_subsample_n", 500)
     )
@@ -340,7 +338,6 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             distance_metrics=distance_metrics,
             diffusion_t_values=diffusion_t_values,
             leiden_resolutions=leiden_resolutions,
-            leiden_resolution_cell_batch=leiden_resolution_cell_batch,
             cache_path=cache_path,
             cell_type_col=cell_type_col,
             batch_col=batch_col,
@@ -351,9 +348,9 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             knn_n_null_permutations=knn_n_null_permutations,
         )
         logger.info(
-            "Reference context ready (%.1fs; classifier cache=%d; Leiden cache=%d; stats cache=%s)",
+            "Reference context ready (%.1fs; cell/batch templates=%d; Leiden cache=%d; stats cache=%s)",
             time.perf_counter() - t0,
-            len(shared.reference_cache),
+            len(shared.static_row_templates),
             len(shared.model_ctx.leiden_cache),
             shared.model_ctx.ref_stats_cache is not None,
         )
@@ -408,7 +405,6 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     distance_metrics=distance_metrics,
                     diffusion_t_values=diffusion_t_values,
                     leiden_resolutions=leiden_resolutions,
-                    leiden_resolution_cell_batch=leiden_resolution_cell_batch,
                     cache_path=str(cache_path),
                     cell_type_col=cell_type_col,
                     batch_col=batch_col,

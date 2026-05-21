@@ -18,9 +18,7 @@ from scfm_controlled_manipulations.evaluation.context import (
 from scfm_controlled_manipulations.evaluation.intervention_job import evaluate_intervention
 from scfm_controlled_manipulations.evaluation.leiden_cache import init_leiden_isolate_pool
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-    ClassifierCacheKey,
-    ClassifierCacheValue,
-    compute_cell_batch_static_rows,
+    compute_cell_batch_reference_rows,
 )
 from scfm_controlled_manipulations.evaluation.reference_prep import precompute_reference_leiden
 from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
@@ -52,7 +50,6 @@ class SharedEvalContext:
     distance_metrics: list[str]
     diffusion_t_values: list[int]
     leiden_resolutions: list[float]
-    leiden_resolution_cell_batch: float
     cache_path: Path
     cell_type_col: str | None
     batch_col: str | None
@@ -61,7 +58,6 @@ class SharedEvalContext:
     knn_alpha: float
     knn_bandwidth_k: int | None
     knn_n_null_permutations: int
-    reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue]
     static_row_templates: list[list[dict[str, Any]]]
 
 
@@ -79,7 +75,6 @@ class SharedEvalPayload:
     distance_metrics: list[str]
     diffusion_t_values: list[int]
     leiden_resolutions: list[float]
-    leiden_resolution_cell_batch: float
     cache_path: str
     cell_type_col: str | None
     batch_col: str | None
@@ -108,7 +103,6 @@ def build_shared_context(
     distance_metrics: list[str],
     diffusion_t_values: list[int],
     leiden_resolutions: list[float],
-    leiden_resolution_cell_batch: float,
     cache_path: Path,
     cell_type_col: str | None,
     batch_col: str | None,
@@ -131,7 +125,6 @@ def build_shared_context(
         k_values=k_values,
         distance_metrics=distance_metrics,
         leiden_resolutions=leiden_resolutions,
-        leiden_resolution_cell_batch=leiden_resolution_cell_batch,
         seed=seed,
     )
     model_ctx.ref_stats_cache = precompute_reference_stats_shift(
@@ -142,30 +135,10 @@ def build_shared_context(
         pairwise_max_pairs=stats_shift_pairwise_max_pairs,
     )
 
-    reference_cache: dict[ClassifierCacheKey, ClassifierCacheValue] = {}
     static_row_templates: list[list[dict[str, Any]]] = []
     if cell_type_col or batch_col:
         static_row_templates.append(
-            compute_cell_batch_static_rows(
-                mat=dataset_ctx.raw_ref,
-                obs_df=dataset_ctx.obs,
-                space_label="raw_reference",
-                dataset_id=dataset_id,
-                model=model,
-                seed=seed,
-                cell_type_col=cell_type_col,
-                batch_col=batch_col,
-                k_values=k_values,
-                distance_metrics=distance_metrics,
-                leiden_resolution=leiden_resolution_cell_batch,
-                reference_cache=reference_cache,
-                knn_cache=dataset_ctx.knn_cache,
-                leiden_cache=model_ctx.leiden_cache,
-                n_cells=dataset_ctx.n_cells,
-            )
-        )
-        static_row_templates.append(
-            compute_cell_batch_static_rows(
+            compute_cell_batch_reference_rows(
                 mat=model_ctx.emb_ref,
                 obs_df=dataset_ctx.obs,
                 space_label="embedding_reference",
@@ -176,10 +149,6 @@ def build_shared_context(
                 batch_col=batch_col,
                 k_values=k_values,
                 distance_metrics=distance_metrics,
-                leiden_resolution=leiden_resolution_cell_batch,
-                reference_cache=reference_cache,
-                knn_cache=dataset_ctx.knn_cache,
-                leiden_cache=model_ctx.leiden_cache,
                 n_cells=dataset_ctx.n_cells,
             )
         )
@@ -197,7 +166,6 @@ def build_shared_context(
         distance_metrics=distance_metrics,
         diffusion_t_values=diffusion_t_values,
         leiden_resolutions=leiden_resolutions,
-        leiden_resolution_cell_batch=leiden_resolution_cell_batch,
         cache_path=cache_path,
         cell_type_col=cell_type_col,
         batch_col=batch_col,
@@ -206,7 +174,6 @@ def build_shared_context(
         knn_alpha=knn_alpha,
         knn_bandwidth_k=knn_bandwidth_k,
         knn_n_null_permutations=knn_n_null_permutations,
-        reference_cache=reference_cache,
         static_row_templates=static_row_templates,
     )
 
@@ -233,7 +200,6 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
         distance_metrics=payload.distance_metrics,
         diffusion_t_values=payload.diffusion_t_values,
         leiden_resolutions=payload.leiden_resolutions,
-        leiden_resolution_cell_batch=payload.leiden_resolution_cell_batch,
         cache_path=Path(payload.cache_path),
         cell_type_col=payload.cell_type_col,
         batch_col=payload.batch_col,
@@ -268,10 +234,8 @@ def run_intervention_task(task: InterventionTask) -> list[pd.DataFrame]:
         leiden_resolutions=ctx.leiden_resolutions,
         cache_path=ctx.cache_path,
         knn_cache=ctx.dataset_ctx.knn_cache,
-        reference_cache=ctx.reference_cache,
         cell_type_col=ctx.cell_type_col,
         batch_col=ctx.batch_col,
-        leiden_resolution_cell_batch=ctx.leiden_resolution_cell_batch,
         static_row_templates=ctx.static_row_templates,
         stats_shift_pairwise_max_pairs=ctx.stats_shift_pairwise_max_pairs,
         knn_alpha=ctx.knn_alpha,

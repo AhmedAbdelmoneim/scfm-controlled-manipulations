@@ -50,7 +50,6 @@ evaluation:
   leiden_resolutions: [0.25, 0.5, 1.0, 2.0]
   cell_type_col: cell_type
   batch_col: batch
-  leiden_resolution_cell_batch: 1.0
   dataset_id: null
   # Process pool size (each worker uses 1 BLAS/sklearn thread). Diffusion matrices cache on disk.
   evaluation_workers: 1

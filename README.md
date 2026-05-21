@@ -98,17 +98,14 @@ Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 | | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
 | | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
 | `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
-| `cell_type_and_batch_metrics` | `raw_reference`, `raw_manipulated`, `embedding_reference`, `embedding_manipulated` | `silhouette` | Label silhouette (global; std `NaN`) |
-| | | `neighbor_same_label_fraction` | Fraction of kNN neighbors sharing label (per-cell dist.) |
-| | | `neighbor_label_entropy_norm` | Normalized neighbor-label entropy (cell types only) |
-| | | `ilisi_like_inverse_simpson` | Inverse Simpson index of neighbor labels (cell types only) |
-| | | `label_vs_leiden_ari` | Agreement between labels and Leiden clusters (**embedding** only) |
-| | | `classifier_roc_auc_ovr_macro_cv_mean` | OVR macro ROC-AUC (3-fold CV mean ± std; permutation null) |
-| | | `classifier_ap_macro_cv_mean` | OVR macro average precision (3-fold CV mean ± std) |
+| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette (scIB; requires `cell_type_col`) |
+| | | `batch_ilisi` | Batch iLISI — local batch mixing (scIB; requires `batch_col`) |
+
+iLISI recomputes a kNN graph on the evaluation embedding via scanpy.
 
 Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
 `knn_alpha`, `knn_bandwidth_k`, `knn_n_null_permutations`, `leiden_resolutions`,
-`leiden_resolution_cell_batch`, `cell_type_col`, `batch_col`, `dataset_id`,
+`cell_type_col`, `batch_col`, `dataset_id`,
 `stats_shift_pairwise_cell_subsample_n`, `stats_shift_pairwise_max_pairs`.
 
 To run a different config:
