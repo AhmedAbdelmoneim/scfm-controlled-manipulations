@@ -7,20 +7,11 @@ app = marimo.App(width="medium")
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Embedding stats and shift exploration
+    # Structure evaluation (notebook)
 
-    This notebook runs the stats-and-shift evaluation pass on one atlas, one
-    model, and one intervention family. It loads the manipulation family,
-    precomputes a reference cache once, then computes `embedding_stats` and
-    `embedding_shift` against that cache and plots the results.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Imports
+    One atlas, one model, one intervention family: **embedding_stats**,
+    **embedding_shift**, and **knn_metrics** (neighborhood overlap + diffusion),
+    then bar plots per manipulation.
     """)
     return
 
@@ -45,6 +36,7 @@ def _():
         DatasetEvaluateContext,
         ModelEvaluateContext,
     )
+    from scfm_controlled_manipulations.evaluation.metrics_knn import compute_knn_metrics
     from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
         compute_embedding_shift,
         compute_embedding_stats,
@@ -52,6 +44,7 @@ def _():
     from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
         precompute_reference_stats_shift,
     )
+    from scfm_controlled_manipulations.io import evaluation_cache_dir
 
     sns.set_theme(style="whitegrid")
     return (
@@ -63,6 +56,8 @@ def _():
         as_float_csr,
         compute_embedding_shift,
         compute_embedding_stats,
+        compute_knn_metrics,
+        evaluation_cache_dir,
         mo,
         np,
         pd,
@@ -72,16 +67,8 @@ def _():
     )
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Configuration
-    """)
-    return
-
-
 @app.cell
-def _(Path):
+def _(Path, evaluation_cache_dir):
     cfg_base_dir = Path("/vault/amoneim/scfm-controlled-manipulations/processed")
     cfg_atlas = "immune"
     cfg_model = "pca"
@@ -89,10 +76,20 @@ def _(Path):
     cfg_intervention_family = "local_smoothing"
     cfg_stats_shift_pairwise_cell_subsample_n = 500
     cfg_stats_shift_pairwise_max_pairs = 10_000
+    cfg_k_values = [15, 30]
+    cfg_distance_metrics = ["euclidean"]
+    cfg_diffusion_t_values = [1, 2, 3, 4, 5, 6, 7, 8]
+    cfg_eval_cache_dir = evaluation_cache_dir(
+        cfg_base_dir / cfg_atlas / "results"
+    )
     return (
         cfg_atlas,
         cfg_base_dir,
+        cfg_diffusion_t_values,
+        cfg_distance_metrics,
+        cfg_eval_cache_dir,
         cfg_intervention_family,
+        cfg_k_values,
         cfg_model,
         cfg_seed,
         cfg_stats_shift_pairwise_cell_subsample_n,
@@ -100,188 +97,123 @@ def _(Path):
     )
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Shared helpers
-
-    Small utilities reused across data loading, metric computation, and the
-    wide-format conversion below.
-    """)
-    return
-
-
 @app.cell
-def _(np):
+def _(
+    AlignedBundle,
+    DatasetEvaluateContext,
+    ModelEvaluateContext,
+    ad,
+    as_float_csr,
+    np,
+    pd,
+    precompute_reference_stats_shift,
+    sp,
+):
     def intervention_param_columns(params_dict):
-        """Flatten intervention params into DataFrame-friendly columns.
-
-        Drops operator entries and skips long array-like values that would not
-        round-trip cleanly into a tabular form.
-        """
         columns = {}
-        for param_key, param_value in params_dict.items():
-            if param_key.startswith("operator"):
+        for key, val in params_dict.items():
+            if key.startswith("operator"):
                 continue
-            if isinstance(param_value, (list, np.ndarray)) and len(param_value) >= 20:
+            if isinstance(val, (list, np.ndarray)) and len(val) >= 20:
                 continue
-            columns[f"intervention_{param_key}"] = param_value
+            columns[f"intervention_{key}"] = val
         return columns
 
-    return (intervention_param_columns,)
+    def make_aligned_bundle(raw_ref_mat, raw_man_mat, emb_ref_mat, emb_man_mat, raw_ref_obs):
+        return AlignedBundle(
+            raw_ref=as_float_csr(raw_ref_mat),
+            raw_man=as_float_csr(raw_man_mat),
+            emb_ref=np.asarray(emb_ref_mat, dtype=np.float32),
+            emb_man=np.asarray(emb_man_mat, dtype=np.float32),
+            obs=raw_ref_obs,
+        )
 
+    def add_manipulation_columns(metrics_df, manipulation_item):
+        out = metrics_df.copy()
+        out["manipulation_id"] = manipulation_item["manipulation_id"]
+        for col, val in intervention_param_columns(
+            manipulation_item["intervention_params"]
+        ).items():
+            out[col] = val
+        return out
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Data loading
-
-    Reads the reference and manipulation `h5ad` files for one atlas, model,
-    and intervention family, checks `obs_names` alignment, and returns the
-    matrices that the bundles downstream expect.
-    """)
-    return
-
-
-@app.cell
-def _(ad, intervention_param_columns, np, sp):
-    def load_family_data(*, base_dir, atlas, model, intervention_family):
-        """Load reference and manipulation matrices for one intervention family."""
-
-        def discover_family_manipulations(manip_dir, family):
-            discovered = []
-            for candidate_path in sorted(manip_dir.glob(f"{family}_*.h5ad")):
-                adata_backed = ad.read_h5ad(candidate_path, backed="r")
-                params_dict = dict(
-                    adata_backed.uns.get("scfm_intervention", {}).get(family, {})
-                )
-                adata_backed.file.close()
-                discovered.append({
-                    "manipulation_id": candidate_path.stem,
-                    "intervention_params": params_dict,
-                })
-            if len(discovered) == 0:
-                raise FileNotFoundError(
-                    f"No manipulations found for family={family} in {manip_dir}"
-                )
-
-            sort_key = (
-                "intervention_k" if family == "local_smoothing" else "manipulation_id"
+    def run_metrics_for_family(*, compute_fn, manipulations, raw_ref_mat, emb_ref_mat, raw_ref_obs, **compute_kwargs):
+        frames = []
+        for item in manipulations:
+            bundle = make_aligned_bundle(
+                raw_ref_mat,
+                item["raw_man_mat"],
+                emb_ref_mat,
+                item["emb_man_mat"],
+                raw_ref_obs,
             )
+            metrics_df = compute_fn(
+                bundle=bundle,
+                intervention_id=item["manipulation_id"],
+                **compute_kwargs,
+            )
+            frames.append(add_manipulation_columns(metrics_df, item))
+        return pd.concat(frames, ignore_index=True)
 
-            def sort_value(entry):
-                param_columns = intervention_param_columns(entry["intervention_params"])
-                if sort_key in param_columns:
-                    return param_columns[sort_key]
-                return entry["manipulation_id"]
-
-            discovered.sort(key=sort_value)
-            return discovered
-
-        def load_matrix_from_h5ad(h5ad_path):
-            adata_obj = ad.read_h5ad(h5ad_path)
-            matrix_obj = adata_obj.X
-            if sp.issparse(matrix_obj):
-                matrix_obj = matrix_obj.toarray()
-            matrix_arr = np.asarray(matrix_obj, dtype=np.float32)
-            obs_names = adata_obj.obs_names.copy()
-            obs_df = adata_obj.obs.copy()
-            return matrix_arr, obs_names, obs_df
-
-        def assert_obs_names_equal(obs_names_a, obs_names_b, label_a, label_b):
-            if not obs_names_a.equals(obs_names_b):
-                raise ValueError(
-                    f"obs_names are not aligned between {label_a} and {label_b}"
-                )
-
+    def load_family_data(*, base_dir, atlas, model, intervention_family):
         manip_dir = base_dir / atlas / "results" / "manipulations"
         emb_dir = base_dir / atlas / "embeddings" / model
-        family_entries = discover_family_manipulations(manip_dir, intervention_family)
 
-        raw_ref_mat, raw_ref_obs_names, raw_ref_obs = load_matrix_from_h5ad(
-            manip_dir / "reference.h5ad"
-        )
-        emb_ref_mat, emb_ref_obs_names, _ = load_matrix_from_h5ad(
-            emb_dir / f"{model}_reference.h5ad"
-        )
-        assert_obs_names_equal(
-            raw_ref_obs_names, emb_ref_obs_names, "raw_ref", "emb_ref"
-        )
+        def load_h5ad(path):
+            adata = ad.read_h5ad(path)
+            x = adata.X
+            if sp.issparse(x):
+                x = x.toarray()
+            return (
+                np.asarray(x, dtype=np.float32),
+                adata.obs_names.copy(),
+                adata.obs.copy(),
+            )
+
+        entries = []
+        for path in sorted(manip_dir.glob(f"{intervention_family}_*.h5ad")):
+            backed = ad.read_h5ad(path, backed="r")
+            params = dict(
+                backed.uns.get("scfm_intervention", {}).get(intervention_family, {})
+            )
+            backed.file.close()
+            entries.append({"manipulation_id": path.stem, "intervention_params": params})
+        if not entries:
+            raise FileNotFoundError(f"No manipulations for {intervention_family} in {manip_dir}")
+
+        sort_key = "intervention_k" if intervention_family == "local_smoothing" else "manipulation_id"
+
+        def sort_val(e):
+            cols = intervention_param_columns(e["intervention_params"])
+            return cols.get(sort_key, e["manipulation_id"])
+
+        entries.sort(key=sort_val)
+
+        raw_ref, raw_obs_names, raw_obs = load_h5ad(manip_dir / "reference.h5ad")
+        emb_ref, emb_obs_names, _ = load_h5ad(emb_dir / f"{model}_reference.h5ad")
+        if not raw_obs_names.equals(emb_obs_names):
+            raise ValueError("raw_ref and emb_ref obs_names differ")
 
         manipulations = []
-        for family_entry in family_entries:
-            manip_id = family_entry["manipulation_id"]
-            raw_man_mat, raw_man_obs_names, _ = load_matrix_from_h5ad(
-                manip_dir / f"{manip_id}.h5ad"
-            )
-            emb_man_mat, emb_man_obs_names, _ = load_matrix_from_h5ad(
-                emb_dir / f"{model}_{manip_id}.h5ad"
-            )
-            assert_obs_names_equal(
-                raw_ref_obs_names, raw_man_obs_names, "raw_ref", f"raw_{manip_id}"
-            )
-            assert_obs_names_equal(
-                raw_ref_obs_names, emb_man_obs_names, "raw_ref", f"emb_{manip_id}"
-            )
+        for entry in entries:
+            mid = entry["manipulation_id"]
+            raw_man, raw_man_obs, _ = load_h5ad(manip_dir / f"{mid}.h5ad")
+            emb_man, emb_man_obs, _ = load_h5ad(emb_dir / f"{model}_{mid}.h5ad")
+            if not raw_obs_names.equals(raw_man_obs) or not raw_obs_names.equals(emb_man_obs):
+                raise ValueError(f"obs misaligned for {mid}")
             manipulations.append({
-                "manipulation_id": manip_id,
-                "intervention_params": family_entry["intervention_params"],
-                "raw_man_mat": raw_man_mat,
-                "emb_man_mat": emb_man_mat,
+                **entry,
+                "raw_man_mat": raw_man,
+                "emb_man_mat": emb_man,
             })
 
         summary = (
-            f"Atlas: {atlas} | Model: {model} | Family: {intervention_family}\n"
-            f"Variants: {len(manipulations)} | Cells: {raw_ref_mat.shape[0]}"
+            f"{atlas} | {model} | {intervention_family} | "
+            f"{len(manipulations)} variants | {raw_ref.shape[0]} cells"
         )
-        return manipulations, emb_ref_mat, raw_ref_mat, raw_ref_obs, summary
+        return manipulations, emb_ref, raw_ref, raw_obs, summary
 
-    return (load_family_data,)
-
-
-@app.cell
-def _(intervention_param_columns, pd):
-    def manipulation_inventory_df(manipulations):
-        """Tabular summary of intervention parameters across manipulations."""
-        return pd.DataFrame([
-            {
-                "manipulation_id": item["manipulation_id"],
-                **intervention_param_columns(item["intervention_params"]),
-            }
-            for item in manipulations
-        ])
-
-    return (manipulation_inventory_df,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Reference cache
-
-    Builds the model and dataset contexts and precomputes the reference
-    statistics that every per-manipulation metric call below reuses.
-    """)
-    return
-
-
-@app.cell
-def _(
-    DatasetEvaluateContext,
-    ModelEvaluateContext,
-    as_float_csr,
-    precompute_reference_stats_shift,
-):
-    def build_reference_model_context(
-        *,
-        emb_ref_mat,
-        raw_ref_mat,
-        raw_ref_obs,
-        seed,
-        pairwise_cell_subsample_n,
-        pairwise_max_pairs,
-    ):
-        """Construct the reference contexts and attach the precomputed cache."""
+    def build_eval_context(*, emb_ref_mat, raw_ref_mat, raw_ref_obs, seed, pairwise_cell_subsample_n, pairwise_max_pairs):
         model_ctx = ModelEvaluateContext(emb_ref=emb_ref_mat)
         dataset_ctx = DatasetEvaluateContext(
             raw_ref=as_float_csr(raw_ref_mat),
@@ -297,441 +229,275 @@ def _(
         )
         cache = model_ctx.ref_stats_cache
         summary = (
-            f"Reference cache ready: n_sub={cache.pairwise_cell_indices.size} "
+            f"ref cache: n_sub={cache.pairwise_cell_indices.size} "
             f"raw_pairs={cache.raw_within_pairwise_l2.size} "
             f"emb_pairs={cache.emb_within_pairwise_l2.size}"
         )
-        return model_ctx, summary
+        return model_ctx, dataset_ctx, summary
 
-    return (build_reference_model_context,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Metric computation
-
-    Applies `compute_embedding_stats` and `compute_embedding_shift` to every
-    manipulation in the family. Both runners share the bundle constructor
-    and the manipulation-column annotator defined first.
-    """)
-    return
-
-
-@app.cell
-def _(AlignedBundle, as_float_csr, intervention_param_columns, np):
-    def make_aligned_bundle(
-        raw_ref_mat, raw_man_mat, emb_ref_mat, emb_man_mat, raw_ref_obs
-    ):
-        return AlignedBundle(
-            raw_ref=as_float_csr(raw_ref_mat),
-            raw_man=as_float_csr(raw_man_mat),
-            emb_ref=np.asarray(emb_ref_mat, dtype=np.float32),
-            emb_man=np.asarray(emb_man_mat, dtype=np.float32),
-            obs=raw_ref_obs,
-        )
-
-    def add_manipulation_columns(metrics_df, manipulation_item):
-        annotated = metrics_df.copy()
-        annotated["manipulation_id"] = manipulation_item["manipulation_id"]
-        for column_name, column_value in intervention_param_columns(
-            manipulation_item["intervention_params"]
-        ).items():
-            annotated[column_name] = column_value
-        return annotated
-
-    return add_manipulation_columns, make_aligned_bundle
-
-
-@app.cell
-def _(
-    add_manipulation_columns,
-    compute_embedding_stats,
-    make_aligned_bundle,
-    pd,
-):
-    def run_embedding_stats_for_family(
-        *,
-        manipulations,
-        raw_ref_mat,
-        emb_ref_mat,
-        raw_ref_obs,
-        ref_stats_cache,
-        dataset_id,
-        model,
-        intervention_name,
-        seed,
-    ):
-        output_frames = []
-        for manipulation_item in manipulations:
-            bundle = make_aligned_bundle(
-                raw_ref_mat,
-                manipulation_item["raw_man_mat"],
-                emb_ref_mat,
-                manipulation_item["emb_man_mat"],
-                raw_ref_obs,
-            )
-            metrics_df = compute_embedding_stats(
-                bundle=bundle,
-                dataset_id=dataset_id,
-                model=model,
-                intervention_id=manipulation_item["manipulation_id"],
-                intervention_name=intervention_name,
-                seed=seed,
-                ref_cache=ref_stats_cache,
-            )
-            output_frames.append(
-                add_manipulation_columns(metrics_df, manipulation_item)
-            )
-        return pd.concat(output_frames, ignore_index=True)
-
-    return (run_embedding_stats_for_family,)
-
-
-@app.cell
-def _(
-    add_manipulation_columns,
-    compute_embedding_shift,
-    make_aligned_bundle,
-    pd,
-):
-    def run_embedding_shift_for_family(
-        *,
-        manipulations,
-        raw_ref_mat,
-        emb_ref_mat,
-        raw_ref_obs,
-        ref_stats_cache,
-        dataset_id,
-        model,
-        intervention_name,
-        seed,
-        pairwise_max_pairs,
-    ):
-        output_frames = []
-        for manipulation_item in manipulations:
-            bundle = make_aligned_bundle(
-                raw_ref_mat,
-                manipulation_item["raw_man_mat"],
-                emb_ref_mat,
-                manipulation_item["emb_man_mat"],
-                raw_ref_obs,
-            )
-            metrics_df = compute_embedding_shift(
-                bundle=bundle,
-                dataset_id=dataset_id,
-                model=model,
-                intervention_id=manipulation_item["manipulation_id"],
-                intervention_name=intervention_name,
-                seed=seed,
-                ref_cache=ref_stats_cache,
-                pairwise_max_pairs=pairwise_max_pairs,
-            )
-            output_frames.append(
-                add_manipulation_columns(metrics_df, manipulation_item)
-            )
-        return pd.concat(output_frames, ignore_index=True)
-
-    return (run_embedding_shift_for_family,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Tidy-format conversion
-
-    Reshapes the long-format metric tables into one row per
-    (manipulation, space, metric, [state]) with both `value_mean` and
-    `value_std` columns, which is the form the plotters expect.
-    """)
-    return
-
-
-@app.cell
-def _(intervention_param_columns, pd):
     def lookup_metric_row(
         metrics_df,
         manipulation_id,
-        space,
+        *,
         metric_category,
         metric_name,
+        space,
         field="value_mean",
+        distance_metric=None,
+        k=None,
+        diffusion_t=None,
     ):
-        """Pull one scalar from the long metrics table (NaN if missing)."""
         if metrics_df is None or metrics_df.empty:
             return float("nan")
-        key = str(manipulation_id)
-        id_column = (
-            "manipulation_id"
-            if "manipulation_id" in metrics_df.columns
-            else "intervention_id"
-        )
-        subset = metrics_df[
-            (metrics_df[id_column].astype(str) == key)
+        id_col = "manipulation_id" if "manipulation_id" in metrics_df.columns else "intervention_id"
+        mask = (
+            (metrics_df[id_col].astype(str) == str(manipulation_id))
             & (metrics_df["space"] == space)
             & (metrics_df["metric_category"] == metric_category)
             & (metrics_df["metric_name"] == metric_name)
-        ]
+        )
+        if distance_metric is not None and "distance_metric" in metrics_df.columns:
+            mask &= metrics_df["distance_metric"] == distance_metric
+        if k is not None and "k" in metrics_df.columns:
+            mask &= metrics_df["k"] == k
+        if "diffusion_t" in metrics_df.columns:
+            if diffusion_t is None:
+                mask &= metrics_df["diffusion_t"].isna()
+            else:
+                mask &= metrics_df["diffusion_t"] == diffusion_t
+        subset = metrics_df.loc[mask]
         if subset.empty or field not in subset.columns:
             return float("nan")
-        value = subset.iloc[0][field]
-        return float("nan") if pd.isna(value) else float(value)
-
-    def assert_embedding_stats_schema(metrics_df):
-        """Fail fast when the stats table is stale or from an old package build."""
-        required = {
-            "col_mean_ref",
-            "col_mean_man",
-            "col_variance_ref",
-            "col_variance_man",
-            "mean_row_l2_norm_ref",
-            "mean_row_l2_norm_man",
-        }
-        present = set(metrics_df["metric_name"].astype(str).unique())
-        missing = sorted(required - present)
-        if missing:
-            raise RuntimeError(
-                "df_embedding_stats is missing metric rows: "
-                f"{missing}. Re-run imports and embedding_stats_run_cell "
-                "(restart the kernel if the package was updated)."
-            )
+        val = subset.iloc[0][field]
+        return float("nan") if pd.isna(val) else float(val)
 
     def tidy_embedding_stats(metrics_df, manipulations):
-        """Long-format stats: l2 norm, per-dim mean, per-dim variance (ref/man)."""
-        assert_embedding_stats_schema(metrics_df)
-        metric_specs = [
+        specs = [
             ("l2_norm", "mean_row_l2_norm_ref", "mean_row_l2_norm_man"),
             ("mean_per_dim", "col_mean_ref", "col_mean_man"),
             ("var_per_dim", "col_variance_ref", "col_variance_man"),
         ]
-        rows = []
-        for manipulation_item in manipulations:
-            manip_id = manipulation_item["manipulation_id"]
-            param_cols = intervention_param_columns(
-                manipulation_item["intervention_params"]
-            )
+
+        def row(item):
+            mid = item["manipulation_id"]
+            base = {"manipulation_id": mid, **intervention_param_columns(item["intervention_params"])}
+            rows = []
             for space in ("raw", "embedding"):
-                for metric_label, ref_name, man_name in metric_specs:
-                    for state, raw_name in (("ref", ref_name), ("manip", man_name)):
+                for label, ref_n, man_n in specs:
+                    for state, name in (("ref", ref_n), ("manip", man_n)):
                         rows.append({
-                            "manipulation_id": manip_id,
-                            **param_cols,
+                            **base,
                             "space": space,
-                            "metric": metric_label,
+                            "metric": label,
                             "state": state,
                             "value_mean": lookup_metric_row(
-                                metrics_df,
-                                manip_id,
-                                space,
-                                "embedding_stats",
-                                raw_name,
-                                field="value_mean",
+                                metrics_df, mid, metric_category="embedding_stats",
+                                metric_name=name, space=space,
                             ),
                             "value_std": lookup_metric_row(
-                                metrics_df,
-                                manip_id,
-                                space,
-                                "embedding_stats",
-                                raw_name,
-                                field="value_std",
+                                metrics_df, mid, metric_category="embedding_stats",
+                                metric_name=name, space=space, field="value_std",
                             ),
                         })
-        return pd.DataFrame(rows)
+            return rows
+
+        out = []
+        for item in manipulations:
+            out.extend(row(item))
+        return pd.DataFrame(out)
 
     def tidy_embedding_shift(metrics_df, manipulations):
-        """Long-format shift metrics (one row per manipulation, space, metric)."""
-        metric_specs = [
+        specs = [
             ("within_ref_spread", "within_ref_pairwise_l2"),
             ("within_man_spread", "within_man_pairwise_l2"),
             ("shift_magnitude", "paired_cell_l2_norm"),
             ("shift_pairwise_cosine", "shift_pairwise_cosine"),
         ]
         rows = []
-        for manipulation_item in manipulations:
-            manip_id = manipulation_item["manipulation_id"]
-            param_cols = intervention_param_columns(
-                manipulation_item["intervention_params"]
-            )
+        for item in manipulations:
+            mid = item["manipulation_id"]
+            base = {"manipulation_id": mid, **intervention_param_columns(item["intervention_params"])}
             for space in ("raw", "embedding"):
-                for metric_label, raw_name in metric_specs:
+                for label, name in specs:
                     rows.append({
-                        "manipulation_id": manip_id,
-                        **param_cols,
+                        **base,
                         "space": space,
-                        "metric": metric_label,
+                        "metric": label,
                         "value_mean": lookup_metric_row(
-                            metrics_df,
-                            manip_id,
-                            space,
-                            "embedding_shift",
-                            raw_name,
-                            field="value_mean",
+                            metrics_df, mid, metric_category="embedding_shift",
+                            metric_name=name, space=space,
                         ),
                         "value_std": lookup_metric_row(
-                            metrics_df,
-                            manip_id,
-                            space,
-                            "embedding_shift",
-                            raw_name,
-                            field="value_std",
+                            metrics_df, mid, metric_category="embedding_shift",
+                            metric_name=name, space=space, field="value_std",
                         ),
                     })
         return pd.DataFrame(rows)
 
+    def tidy_knn_metrics(metrics_df, manipulations, k_values, distance_metrics, diffusion_t_values):
+        rows = []
+        for item in manipulations:
+            mid = item["manipulation_id"]
+            base = {"manipulation_id": mid, **intervention_param_columns(item["intervention_params"])}
+            for dm in distance_metrics:
+                for k in k_values:
+                    for space in ("raw", "embedding"):
+                        for label, name in (("knn_recall", "knn_recall"), ("knn_jaccard", "knn_jaccard")):
+                            rows.append({
+                                **base,
+                                "space": space,
+                                "metric": label,
+                                "distance_metric": dm,
+                                "k": int(k),
+                                "diffusion_t": np.nan,
+                                "value_mean": lookup_metric_row(
+                                    metrics_df, mid, metric_category="knn_metrics",
+                                    metric_name=name, space=space,
+                                    distance_metric=dm, k=int(k), diffusion_t=None,
+                                ),
+                                "value_std": lookup_metric_row(
+                                    metrics_df, mid, metric_category="knn_metrics",
+                                    metric_name=name, space=space, field="value_std",
+                                    distance_metric=dm, k=int(k), diffusion_t=None,
+                                ),
+                                "null_value": lookup_metric_row(
+                                    metrics_df, mid, metric_category="knn_metrics",
+                                    metric_name=name, space=space, field="null_value",
+                                    distance_metric=dm, k=int(k), diffusion_t=None,
+                                ),
+                            })
+                    for t in diffusion_t_values:
+                        for label, name in (
+                            ("diffusion_sym_kl", "diffusion_sym_kl"),
+                            ("diffusion_js", "diffusion_js"),
+                        ):
+                            rows.append({
+                                **base,
+                                "space": "embedding",
+                                "metric": label,
+                                "distance_metric": dm,
+                                "k": int(k),
+                                "diffusion_t": int(t),
+                                "value_mean": lookup_metric_row(
+                                    metrics_df, mid, metric_category="knn_metrics",
+                                    metric_name=name, space="embedding",
+                                    distance_metric=dm, k=int(k), diffusion_t=int(t),
+                                ),
+                                "value_std": lookup_metric_row(
+                                    metrics_df, mid, metric_category="knn_metrics",
+                                    metric_name=name, space="embedding", field="value_std",
+                                    distance_metric=dm, k=int(k), diffusion_t=int(t),
+                                ),
+                                "null_value": lookup_metric_row(
+                                    metrics_df, mid, metric_category="knn_metrics",
+                                    metric_name=name, space="embedding", field="null_value",
+                                    distance_metric=dm, k=int(k), diffusion_t=int(t),
+                                ),
+                            })
+        return pd.DataFrame(rows)
+
     return (
-        assert_embedding_stats_schema,
+        build_eval_context,
+        intervention_param_columns,
+        load_family_data,
+        run_metrics_for_family,
         tidy_embedding_shift,
         tidy_embedding_stats,
+        tidy_knn_metrics,
     )
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Plotting
-
-    Two figures per evaluator, one for the raw space and one for the
-    embedding space, with bars for each manipulation in the family and
-    error bars taken from each metric's std.
-    """)
-    return
-
-
 @app.cell
-def _(np):
-    def grouped_bars_with_errors(ax, df_subset, x_col, hue_col=None):
-        """Draw bars from pre-computed `value_mean` and `value_std`.
+def _(intervention_param_columns, np, pd, plt):
+    def manipulation_inventory_df(manipulations):
+        return pd.DataFrame([
+            {"manipulation_id": m["manipulation_id"], **intervention_param_columns(m["intervention_params"])}
+            for m in manipulations
+        ])
 
-        With `hue_col=None` draws one bar per `x_col` value. With a hue
-        column draws grouped bars per hue level, side by side. NaN stds are
-        treated as zero so missing error bars are simply omitted.
-        """
+    def x_col_from_df(df):
+        return "intervention_k" if "intervention_k" in df.columns else "manipulation_id"
+
+    def grouped_bars_with_errors(ax, df_subset, x_col, hue_col=None):
         x_values = list(df_subset[x_col].drop_duplicates())
-        x_positions = np.arange(len(x_values))
+        x_pos = np.arange(len(x_values))
 
         def safe_yerr(stds):
             return np.where(np.isnan(stds), 0.0, stds)
 
         if hue_col is None:
             ordered = df_subset.set_index(x_col).reindex(x_values)
-            ax.bar(
-                x_positions,
-                ordered["value_mean"].values,
-                yerr=safe_yerr(ordered["value_std"].values),
-                capsize=4,
-            )
+            ax.bar(x_pos, ordered["value_mean"].values, yerr=safe_yerr(ordered["value_std"].values), capsize=4)
         else:
-            hue_values = list(df_subset[hue_col].drop_duplicates())
-            n_hues = len(hue_values)
-            bar_width = 0.8 / max(n_hues, 1)
-            for i, hue_val in enumerate(hue_values):
-                ordered = (
-                    df_subset[df_subset[hue_col] == hue_val]
-                    .set_index(x_col)
-                    .reindex(x_values)
-                )
-                offset = (i - (n_hues - 1) / 2.0) * bar_width
+            hues = list(df_subset[hue_col].drop_duplicates())
+            width = 0.8 / max(len(hues), 1)
+            for i, hue in enumerate(hues):
+                ordered = df_subset[df_subset[hue_col] == hue].set_index(x_col).reindex(x_values)
                 ax.bar(
-                    x_positions + offset,
+                    x_pos + (i - (len(hues) - 1) / 2) * width,
                     ordered["value_mean"].values,
-                    bar_width,
+                    width,
                     yerr=safe_yerr(ordered["value_std"].values),
                     capsize=3,
-                    label=str(hue_val),
+                    label=str(hue),
                 )
             ax.legend(title=hue_col)
-
-        ax.set_xticks(x_positions)
+        ax.set_xticks(x_pos)
         ax.set_xticklabels([str(v) for v in x_values], rotation=45, ha="right")
         ax.set_xlabel(x_col)
 
-    return (grouped_bars_with_errors,)
-
-
-@app.cell
-def _(grouped_bars_with_errors, plt):
-    def plot_embedding_stats(df_stats_tidy):
-        """One figure per space, three subplots per figure.
-
-        Subplots are L2 norm, mean per dimension, and variance per dimension.
-        Each subplot groups bars by `state` (reference vs manipulated) with
-        one group per manipulation. Error bars come from each metric's std.
-        """
-        x_col = (
-            "intervention_k"
-            if "intervention_k" in df_stats_tidy.columns
-            else "manipulation_id"
-        )
-        metric_specs = [
-            ("l2_norm", "Row L2 norm"),
-            ("mean_per_dim", "Mean per dimension"),
-            ("var_per_dim", "Variance per dimension"),
-        ]
-        figs = []
-        for space in ("raw", "embedding"):
-            fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-            fig.suptitle(f"Embedding stats — {space} space", y=1.02)
-            for ax, (metric, title) in zip(axes, metric_specs):
-                df_sub = df_stats_tidy[
-                    (df_stats_tidy["space"] == space)
-                    & (df_stats_tidy["metric"] == metric)
-                ]
-                grouped_bars_with_errors(ax, df_sub, x_col=x_col, hue_col="state")
-                ax.set_title(title)
-                ax.set_ylabel("value")
+    def plot_metric_panels(df_tidy, *, title, spaces, metric_specs, layout, hue_col=None):
+        x_col = x_col_from_df(df_tidy)
+        nrows, ncols = layout
+        figsize = (ncols * 4.5, nrows * 3.8)
+        for space in spaces:
+            fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+            axes = np.atleast_1d(axes).ravel()
+            fig.suptitle(f"{title} — {space}", y=1.02)
+            for ax, (key, subtitle) in zip(axes, metric_specs):
+                sub = df_tidy[(df_tidy["space"] == space) & (df_tidy["metric"] == key)]
+                grouped_bars_with_errors(ax, sub, x_col, hue_col)
+                ax.set_title(subtitle)
+                ax.set_ylabel("value_mean")
             plt.tight_layout()
             plt.show()
-            figs.append(fig)
 
-    return (plot_embedding_stats,)
+    def plot_knn_overlap(df_tidy, k_values):
+        x_col = x_col_from_df(df_tidy)
+        overlap = df_tidy[df_tidy["metric"].isin(("knn_recall", "knn_jaccard"))]
+        for k in k_values:
+            for space in ("raw", "embedding"):
+                fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+                fig.suptitle(f"kNN overlap — {space}, k={k}", y=1.02)
+                for ax, metric in zip(axes, ("knn_recall", "knn_jaccard")):
+                    sub = overlap[(overlap["space"] == space) & (overlap["metric"] == metric) & (overlap["k"] == k)]
+                    grouped_bars_with_errors(ax, sub, x_col)
+                    ax.set_title(metric)
+                    ax.set_ylabel("value_mean")
+                plt.tight_layout()
+                plt.show()
 
+    def plot_knn_diffusion(df_tidy, k_values, diffusion_t_values):
+        x_col = x_col_from_df(df_tidy)
+        diff = df_tidy[df_tidy["metric"].isin(("diffusion_sym_kl", "diffusion_js"))]
+        for k in k_values:
+            for t in diffusion_t_values:
+                fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+                fig.suptitle(f"Diffusion — embedding, k={k}, t={t}", y=1.02)
+                for ax, metric in zip(axes, ("diffusion_sym_kl", "diffusion_js")):
+                    sub = diff[(diff["k"] == k) & (diff["diffusion_t"] == t) & (diff["metric"] == metric)]
+                    grouped_bars_with_errors(ax, sub, x_col)
+                    ax.set_title(metric)
+                    ax.set_ylabel("value_mean")
+                plt.tight_layout()
+                plt.show()
 
-@app.cell
-def _(grouped_bars_with_errors, plt):
-    def plot_embedding_shift(df_shift_tidy):
-        """One figure per space, four subplots per figure.
-
-        Subplots are within-reference pairwise spread, within-manipulated
-        pairwise spread, paired shift magnitude (||manip - ref||), and
-        pairwise cosine similarity between per-cell shift vectors. One bar
-        per manipulation. Error bars come from each metric's std.
-        """
-        x_col = (
-            "intervention_k"
-            if "intervention_k" in df_shift_tidy.columns
-            else "manipulation_id"
-        )
-        metric_specs = [
-            ("within_ref_spread", "Within-reference pairwise L2"),
-            ("within_man_spread", "Within-manipulated pairwise L2"),
-            ("shift_magnitude", "Shift magnitude ||manip − ref||"),
-            ("shift_pairwise_cosine", "Pairwise shift cosine"),
-        ]
-        figs = []
-        for space in ("raw", "embedding"):
-            fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-            fig.suptitle(f"Embedding shift — {space} space", y=1.02)
-            for ax, (metric, title) in zip(axes.ravel(), metric_specs):
-                df_sub = df_shift_tidy[
-                    (df_shift_tidy["space"] == space)
-                    & (df_shift_tidy["metric"] == metric)
-                ]
-                grouped_bars_with_errors(ax, df_sub, x_col=x_col, hue_col=None)
-                ax.set_title(title)
-                ax.set_ylabel("value")
-            plt.tight_layout()
-            plt.show()
-            figs.append(fig)
-
-    return (plot_embedding_shift,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Load data
-    """)
-    return
+    return (
+        manipulation_inventory_df,
+        plot_knn_diffusion,
+        plot_knn_overlap,
+        plot_metric_panels,
+    )
 
 
 @app.cell
@@ -742,13 +508,11 @@ def _(
     cfg_model,
     load_family_data,
 ):
-    data_manipulations, emb_ref_mat, raw_ref_mat, raw_ref_obs, load_summary = (
-        load_family_data(
-            base_dir=cfg_base_dir,
-            atlas=cfg_atlas,
-            model=cfg_model,
-            intervention_family=cfg_intervention_family,
-        )
+    data_manipulations, emb_ref_mat, raw_ref_mat, raw_ref_obs, load_summary = load_family_data(
+        base_dir=cfg_base_dir,
+        atlas=cfg_atlas,
+        model=cfg_model,
+        intervention_family=cfg_intervention_family,
     )
     print(load_summary)
     return data_manipulations, emb_ref_mat, raw_ref_mat, raw_ref_obs
@@ -756,22 +520,13 @@ def _(
 
 @app.cell
 def _(data_manipulations, manipulation_inventory_df):
-    df_manipulation_inventory = manipulation_inventory_df(data_manipulations)
-    df_manipulation_inventory
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Precompute reference cache
-    """)
+    manipulation_inventory_df(data_manipulations)
     return
 
 
 @app.cell
 def _(
-    build_reference_model_context,
+    build_eval_context,
     cfg_seed,
     cfg_stats_shift_pairwise_cell_subsample_n,
     cfg_stats_shift_pairwise_max_pairs,
@@ -779,7 +534,7 @@ def _(
     raw_ref_mat,
     raw_ref_obs,
 ):
-    notebook_model_ctx, ref_cache_summary = build_reference_model_context(
+    notebook_model_ctx, notebook_dataset_ctx, ref_cache_summary = build_eval_context(
         emb_ref_mat=emb_ref_mat,
         raw_ref_mat=raw_ref_mat,
         raw_ref_obs=raw_ref_obs,
@@ -788,88 +543,7 @@ def _(
         pairwise_max_pairs=cfg_stats_shift_pairwise_max_pairs,
     )
     print(ref_cache_summary)
-    return (notebook_model_ctx,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Embedding stats
-
-    Compute the per-manipulation stats, reshape to wide form, plot.
-    """)
-    return
-
-
-@app.cell
-def _(
-    cfg_atlas,
-    cfg_intervention_family,
-    cfg_model,
-    cfg_seed,
-    data_manipulations,
-    emb_ref_mat,
-    notebook_model_ctx,
-    raw_ref_mat,
-    raw_ref_obs,
-    run_embedding_stats_for_family,
-):
-    df_embedding_stats = run_embedding_stats_for_family(
-        manipulations=data_manipulations,
-        raw_ref_mat=raw_ref_mat,
-        emb_ref_mat=emb_ref_mat,
-        raw_ref_obs=raw_ref_obs,
-        ref_stats_cache=notebook_model_ctx.ref_stats_cache,
-        dataset_id=cfg_atlas,
-        model=cfg_model,
-        intervention_name=cfg_intervention_family,
-        seed=cfg_seed,
-    )
-    print(
-        "embedding_stats metric_name:",
-        sorted(df_embedding_stats["metric_name"].astype(str).unique()),
-    )
-    return (df_embedding_stats,)
-
-
-@app.cell
-def _(
-    assert_embedding_stats_schema,
-    data_manipulations,
-    df_embedding_stats,
-    tidy_embedding_stats,
-):
-    assert_embedding_stats_schema(df_embedding_stats)
-    df_stats_tidy = tidy_embedding_stats(df_embedding_stats, data_manipulations)
-    mean_nan = df_stats_tidy.loc[
-        df_stats_tidy["metric"] == "mean_per_dim", "value_mean"
-    ].isna().all()
-    if mean_nan:
-        sample = df_embedding_stats[
-            df_embedding_stats["metric_name"].str.contains("col_mean", na=False)
-        ][["intervention_id", "manipulation_id", "space", "metric_name", "value_mean"]]
-        raise RuntimeError(
-            "mean_per_dim is all NaN after tidy conversion. "
-            f"Sample col_mean rows in df_embedding_stats:\n{sample.head(12)}"
-        )
-    df_stats_tidy
-    return (df_stats_tidy,)
-
-
-@app.cell
-def _(df_stats_tidy, plot_embedding_stats):
-    plot_embedding_stats(df_stats_tidy)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Embedding shift
-
-    Compute the per-manipulation shifts, reshape to wide form, plot.
-    """)
-    return
+    return notebook_dataset_ctx, notebook_model_ctx
 
 
 @app.cell
@@ -879,38 +553,148 @@ def _(
     cfg_model,
     cfg_seed,
     cfg_stats_shift_pairwise_max_pairs,
+    compute_embedding_shift,
+    compute_embedding_stats,
     data_manipulations,
     emb_ref_mat,
     notebook_model_ctx,
     raw_ref_mat,
     raw_ref_obs,
-    run_embedding_shift_for_family,
+    run_metrics_for_family,
 ):
-    df_embedding_shift = run_embedding_shift_for_family(
+    common = dict(
         manipulations=data_manipulations,
         raw_ref_mat=raw_ref_mat,
         emb_ref_mat=emb_ref_mat,
         raw_ref_obs=raw_ref_obs,
-        ref_stats_cache=notebook_model_ctx.ref_stats_cache,
         dataset_id=cfg_atlas,
         model=cfg_model,
         intervention_name=cfg_intervention_family,
         seed=cfg_seed,
-        pairwise_max_pairs=cfg_stats_shift_pairwise_max_pairs,
     )
-    return (df_embedding_shift,)
+    df_embedding_stats = run_metrics_for_family(
+        compute_fn=compute_embedding_stats,
+        ref_cache=notebook_model_ctx.ref_stats_cache,
+        **common,
+    )
+    df_embedding_shift = run_metrics_for_family(
+        compute_fn=compute_embedding_shift,
+        ref_cache=notebook_model_ctx.ref_stats_cache,
+        pairwise_max_pairs=cfg_stats_shift_pairwise_max_pairs,
+        **common,
+    )
+    print("stats:", sorted(df_embedding_stats["metric_name"].unique()))
+    print("shift:", sorted(df_embedding_shift["metric_name"].unique()))
+    return df_embedding_shift, df_embedding_stats
 
 
 @app.cell
-def _(data_manipulations, df_embedding_shift, tidy_embedding_shift):
+def _(
+    cfg_atlas,
+    cfg_diffusion_t_values,
+    cfg_distance_metrics,
+    cfg_eval_cache_dir,
+    cfg_intervention_family,
+    cfg_k_values,
+    cfg_model,
+    cfg_seed,
+    compute_knn_metrics,
+    data_manipulations,
+    emb_ref_mat,
+    notebook_dataset_ctx,
+    raw_ref_mat,
+    raw_ref_obs,
+    run_metrics_for_family,
+):
+    df_knn_metrics = run_metrics_for_family(
+        compute_fn=compute_knn_metrics,
+        manipulations=data_manipulations,
+        raw_ref_mat=raw_ref_mat,
+        emb_ref_mat=emb_ref_mat,
+        raw_ref_obs=raw_ref_obs,
+        dataset_id=cfg_atlas,
+        model=cfg_model,
+        intervention_name=cfg_intervention_family,
+        seed=cfg_seed,
+        distance_metrics=cfg_distance_metrics,
+        k_values=cfg_k_values,
+        diffusion_t_values=cfg_diffusion_t_values,
+        cache_dir=cfg_eval_cache_dir,
+        knn_cache=notebook_dataset_ctx.knn_cache,
+    )
+    print("knn:", sorted(df_knn_metrics["metric_name"].unique()))
+    return (df_knn_metrics,)
+
+
+@app.cell
+def _(
+    cfg_diffusion_t_values,
+    cfg_distance_metrics,
+    cfg_k_values,
+    data_manipulations,
+    df_embedding_shift,
+    df_embedding_stats,
+    df_knn_metrics,
+    tidy_embedding_shift,
+    tidy_embedding_stats,
+    tidy_knn_metrics,
+):
+    df_stats_tidy = tidy_embedding_stats(df_embedding_stats, data_manipulations)
     df_shift_tidy = tidy_embedding_shift(df_embedding_shift, data_manipulations)
-    df_shift_tidy
-    return (df_shift_tidy,)
+    df_knn_tidy = tidy_knn_metrics(
+        df_knn_metrics,
+        data_manipulations,
+        cfg_k_values,
+        cfg_distance_metrics,
+        cfg_diffusion_t_values,
+    )
+    return df_knn_tidy, df_shift_tidy, df_stats_tidy
 
 
 @app.cell
-def _(df_shift_tidy, plot_embedding_shift):
-    plot_embedding_shift(df_shift_tidy)
+def _(df_stats_tidy, plot_metric_panels):
+    plot_metric_panels(
+        df_stats_tidy,
+        title="Embedding stats",
+        spaces=("raw", "embedding"),
+        metric_specs=[
+            ("l2_norm", "Row L2 norm"),
+            ("mean_per_dim", "Mean per dimension"),
+            ("var_per_dim", "Variance per dimension"),
+        ],
+        layout=(1, 3),
+        hue_col="state",
+    )
+    return
+
+
+@app.cell
+def _(df_shift_tidy, plot_metric_panels):
+    plot_metric_panels(
+        df_shift_tidy,
+        title="Embedding shift",
+        spaces=("raw", "embedding"),
+        metric_specs=[
+            ("within_ref_spread", "Within-ref pairwise L2"),
+            ("within_man_spread", "Within-man pairwise L2"),
+            ("shift_magnitude", "||manip − ref||"),
+            ("shift_pairwise_cosine", "Pairwise shift cosine"),
+        ],
+        layout=(2, 2),
+    )
+    return
+
+
+@app.cell
+def _(
+    cfg_diffusion_t_values,
+    cfg_k_values,
+    df_knn_tidy,
+    plot_knn_diffusion,
+    plot_knn_overlap,
+):
+    plot_knn_overlap(df_knn_tidy, cfg_k_values)
+    plot_knn_diffusion(df_knn_tidy, cfg_k_values, cfg_diffusion_t_values)
     return
 
 
