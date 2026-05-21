@@ -10,9 +10,10 @@ import numpy as np
 import pandas as pd
 import scib
 
+from scfm_controlled_manipulations.evaluation.data import _as_dense_embedding
 from scfm_controlled_manipulations.evaluation.metrics_common import (
+    make_metric_row,
     scalar_summary,
-    summary_to_row_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,12 +62,6 @@ def log_cell_batch_obs_columns(
             )
 
 
-def _as_dense_embedding(mat: Any) -> np.ndarray:
-    if hasattr(mat, "todense"):
-        return np.asarray(mat.todense(), dtype=np.float32)
-    return np.asarray(mat, dtype=np.float32)
-
-
 def _matrix_to_adata(mat: Any, obs_df: pd.DataFrame) -> ad.AnnData:
     embed = _as_dense_embedding(mat)
     n_cells = embed.shape[0]
@@ -76,7 +71,8 @@ def _matrix_to_adata(mat: Any, obs_df: pd.DataFrame) -> ad.AnnData:
     return adata
 
 
-def _base_row(
+def _append_metric_row(
+    rows: list[dict[str, Any]],
     *,
     dataset_id: str,
     model: str,
@@ -87,35 +83,23 @@ def _base_row(
     n_cells: int,
     distance_metric: str,
     k: int,
-) -> dict[str, Any]:
-    return {
-        "dataset_id": dataset_id,
-        "model": model,
-        "intervention_id": intervention_id,
-        "intervention_name": intervention_name,
-        "metric_category": METRIC_CATEGORY,
-        "space": space_label,
-        "seed": seed,
-        "n_cells": n_cells,
-        "distance_metric": distance_metric,
-        "k": k,
-    }
-
-
-def _append_metric_row(
-    rows: list[dict[str, Any]],
-    *,
-    base: dict[str, Any],
     metric_name: str,
     value: float,
 ) -> None:
     rows.append(
-        {
-            **base,
-            "metric_name": metric_name,
-            **summary_to_row_fields(scalar_summary(value)),
-            "null_value": np.nan,
-        }
+        make_metric_row(
+            dataset_id=dataset_id,
+            model=model,
+            intervention_id=intervention_id,
+            intervention_name=intervention_name,
+            metric_category=METRIC_CATEGORY,
+            metric_name=metric_name,
+            space=space_label,
+            summary=scalar_summary(value),
+            n_cells=n_cells,
+            seed=seed,
+            extra={"distance_metric": distance_metric, "k": k},
+        )
     )
 
 
@@ -155,18 +139,6 @@ def _compute_scib_integration_rows(
 
     k_meta = max(int(k) for k in k_values) if k_values else 0
     distance_metric = distance_metrics[0] if distance_metrics else "cosine"
-    base = _base_row(
-        dataset_id=dataset_id,
-        model=model,
-        intervention_id=intervention_id,
-        intervention_name=intervention_name,
-        space_label=space_label,
-        seed=seed,
-        n_cells=n_cells,
-        distance_metric=distance_metric,
-        k=k_meta,
-    )
-
     adata = _matrix_to_adata(mat, obs_df)
     rows: list[dict[str, Any]] = []
 
@@ -176,7 +148,20 @@ def _compute_scib_integration_rows(
             "cell_type_asw",
             space_label,
         )
-        _append_metric_row(rows, base=base, metric_name="cell_type_asw", value=asw)
+        _append_metric_row(
+            rows,
+            dataset_id=dataset_id,
+            model=model,
+            intervention_id=intervention_id,
+            intervention_name=intervention_name,
+            space_label=space_label,
+            seed=seed,
+            n_cells=n_cells,
+            distance_metric=distance_metric,
+            k=k_meta,
+            metric_name="cell_type_asw",
+            value=asw,
+        )
 
     if has_batch and batch_col is not None:
         ilisi = _safe_scib_metric(
@@ -190,7 +175,20 @@ def _compute_scib_integration_rows(
             "batch_ilisi",
             space_label,
         )
-        _append_metric_row(rows, base=base, metric_name="batch_ilisi", value=ilisi)
+        _append_metric_row(
+            rows,
+            dataset_id=dataset_id,
+            model=model,
+            intervention_id=intervention_id,
+            intervention_name=intervention_name,
+            space_label=space_label,
+            seed=seed,
+            n_cells=n_cells,
+            distance_metric=distance_metric,
+            k=k_meta,
+            metric_name="batch_ilisi",
+            value=ilisi,
+        )
 
     return rows
 

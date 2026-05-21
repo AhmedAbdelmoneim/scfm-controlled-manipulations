@@ -74,6 +74,16 @@ evaluate:
 benchmark-eval:
 	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml
 
+## Run unit tests
+.PHONY: test
+test:
+	uv run python -m unittest discover -s tests -v
+
+## Fast synthetic smoke-run for evaluate pipeline
+.PHONY: smoke-eval
+smoke-eval:
+	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml --n-cells 200 --n-genes 400 --emb-dim 32 --max-interventions 1
+
 
 
 #################################################################################

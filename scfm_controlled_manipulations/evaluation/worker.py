@@ -20,7 +20,7 @@ from scfm_controlled_manipulations.evaluation.leiden_cache import init_leiden_is
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
     compute_cell_batch_reference_rows,
 )
-from scfm_controlled_manipulations.evaluation.reference_prep import precompute_reference_leiden
+from scfm_controlled_manipulations.evaluation.metrics_clustering import run_leiden_labels
 from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
     precompute_reference_stats_shift,
 )
@@ -53,12 +53,33 @@ class SharedEvalContext:
     cache_path: Path
     cell_type_col: str | None
     batch_col: str | None
-    stats_shift_pairwise_cell_subsample_n: int
     stats_shift_pairwise_max_pairs: int | None
     knn_alpha: float
     knn_bandwidth_k: int | None
     knn_n_null_permutations: int
     static_row_templates: list[list[dict[str, Any]]]
+
+
+def _warm_reference_leiden_cache(
+    *,
+    model_ctx: ModelEvaluateContext,
+    k_values: list[int],
+    distance_metrics: list[str],
+    leiden_resolutions: list[float],
+    seed: int,
+) -> None:
+    resolutions = sorted(set(float(r) for r in leiden_resolutions))
+    for metric in distance_metrics:
+        for k in k_values:
+            for resolution in resolutions:
+                run_leiden_labels(
+                    model_ctx.emb_ref,
+                    k=int(k),
+                    metric=metric,
+                    resolution=resolution,
+                    seed=seed,
+                    leiden_cache=model_ctx.leiden_cache,
+                )
 
 
 @dataclass(frozen=True)
@@ -120,8 +141,8 @@ def build_shared_context(
         for metric in distance_metrics:
             dataset_ctx.knn_cache.neighbors(dataset_ctx.raw_ref, k_max, metric)
             dataset_ctx.knn_cache.neighbors(model_ctx.emb_ref, k_max, metric)
-    precompute_reference_leiden(
-        model_ctx,
+    _warm_reference_leiden_cache(
+        model_ctx=model_ctx,
         k_values=k_values,
         distance_metrics=distance_metrics,
         leiden_resolutions=leiden_resolutions,
@@ -169,7 +190,6 @@ def build_shared_context(
         cache_path=cache_path,
         cell_type_col=cell_type_col,
         batch_col=batch_col,
-        stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
         stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
         knn_alpha=knn_alpha,
         knn_bandwidth_k=knn_bandwidth_k,

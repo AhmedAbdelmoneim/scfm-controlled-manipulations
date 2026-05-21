@@ -483,7 +483,7 @@ def run_manipulate(config: dict[str, Any]) -> None:
     logger.info("Finished manipulation run: %d/%d variants complete", len(specs), len(specs))
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SCFM controlled manipulations pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -495,16 +495,26 @@ def main() -> None:
         help="Structure metrics (raw + embedding) vs reference for each manipulation",
     )
     p_ev.add_argument("--config", type=Path, required=True)
+    return parser
 
+
+def _run_command(command: str, cfg: dict[str, Any]) -> None:
+    if command == "manipulate":
+        run_manipulate(cfg)
+        return
+    if command == "evaluate":
+        run_evaluate(cfg)
+        return
+    raise ValueError(f"Unsupported command: {command}")
+
+
+def main() -> None:
+    parser = _build_parser()
     args = parser.parse_args()
     cfg = _load_config(args.config)
     _configure_logging(str(cfg.get("log_level", "INFO")))
     logger.info("Loaded config from %s", args.config)
-
-    if args.command == "manipulate":
-        run_manipulate(cfg)
-    elif args.command == "evaluate":
-        run_evaluate(cfg)
+    _run_command(args.command, cfg)
 
 
 if __name__ == "__main__":

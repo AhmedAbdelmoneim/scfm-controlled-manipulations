@@ -13,6 +13,7 @@ to average across multiple shuffles.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import logging
 from pathlib import Path
@@ -25,9 +26,8 @@ from sklearn.neighbors import NearestNeighbors
 
 from scfm_controlled_manipulations.evaluation.disk_cache import load_or_build_pickle
 from scfm_controlled_manipulations.evaluation.metrics_common import (
-    DistributionSummary,
     distribution_summary,
-    summary_to_row_fields,
+    make_metric_row,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,22 +134,6 @@ def row_normalize_sparse(adj: sp.csr_matrix) -> sp.csr_matrix:
     row_sums[row_sums == 0] = 1.0
     inv = sp.diags(1.0 / row_sums)
     return inv @ adj
-
-
-# ----------------------------------------------------------------------------
-# Transition powers
-# ----------------------------------------------------------------------------
-
-
-def sparse_transition_power(adj: sp.csr_matrix, t: int) -> sp.csr_matrix:
-    """T^t for a single t (sequential multiplication)."""
-    transition = row_normalize_sparse(adj)
-    if t < 1:
-        return transition
-    out = transition
-    for _ in range(1, t):
-        out = out @ transition
-    return out
 
 
 def transition_powers(adj: sp.csr_matrix, t_values: list[int]) -> dict[int, sp.csr_matrix]:
@@ -297,6 +281,23 @@ def _cache_path(
     return cache_dir / f"diffusion_{h}.pkl"
 
 
+def _knn_cache_path(
+    cache_dir: Path,
+    *,
+    dataset_id: str,
+    model: str,
+    space: str,
+    metric: str,
+    k: int,
+    n_cells: int,
+    side: str,
+) -> Path:
+    payload = f"{dataset_id}|{model}|{space}|{metric}|{k}|{n_cells}|{side}"
+    h = hashlib.sha256(payload.encode()).hexdigest()[:20]
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"knn_{h}.pkl"
+
+
 def _load_or_compute_transition_powers(
     cache_dir: Path,
     *,
@@ -307,7 +308,7 @@ def _load_or_compute_transition_powers(
     k: int,
     n_cells: int,
     side: str,
-    adj: sp.csr_matrix,
+    adj_builder: Callable[[], sp.csr_matrix],
     t_values: list[int],
 ) -> dict[int, sp.csr_matrix]:
     """Return T^t for each requested t, reading per-t pickles where present."""
@@ -334,6 +335,7 @@ def _load_or_compute_transition_powers(
             len(missing),
             len(t_values),
         )
+        adj = adj_builder()
         precomputed = transition_powers(adj, missing)
     else:
         precomputed = {}
@@ -351,42 +353,167 @@ def _load_or_compute_transition_powers(
     return out
 
 
-# ----------------------------------------------------------------------------
-# Row assembly
-# ----------------------------------------------------------------------------
-
-
-def _row_metric_row(
+def _compute_knn_recall_rows(
     *,
+    knn_at_max: dict[tuple[str, str], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+    knn_spaces: tuple[str, ...],
+    distance_metrics: list[str],
+    k_sorted: list[int],
     dataset_id: str,
     model: str,
     intervention_id: str,
     intervention_name: str,
-    category: str,
-    metric_name: str,
-    space: str,
-    summary: DistributionSummary,
-    null_value: float,
-    n_cells: int,
     seed: int,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        "dataset_id": dataset_id,
-        "model": model,
-        "intervention_id": intervention_id,
-        "intervention_name": intervention_name,
-        "metric_category": category,
-        "metric_name": metric_name,
-        "space": space,
-        **summary_to_row_fields(summary),
-        "null_value": null_value,
-        "n_cells": n_cells,
-        "seed": seed,
-    }
-    if extra:
-        row.update(extra)
-    return row
+    n_cells: int,
+    n_null: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for space in knn_spaces:
+        for metric in distance_metrics:
+            _, ref_idx_max, _, man_idx_max = knn_at_max[(space, metric)]
+            for k in k_sorted:
+                ref_idx = ref_idx_max[:, :k]
+                man_idx = man_idx_max[:, :k]
+                recall = knn_overlap_per_cell(ref_idx, man_idx, k)
+
+                null_rng = np.random.default_rng(_knn_null_seed(seed, space, metric, k))
+                null_recall_sum = 0.0
+                for _ in range(n_null):
+                    perm = null_rng.permutation(n_cells)
+                    null_recall_cells = knn_overlap_per_cell(ref_idx, man_idx[perm], k)
+                    null_recall_sum += float(np.mean(null_recall_cells))
+                null_recall = null_recall_sum / n_null
+
+                rows.append(
+                    make_metric_row(
+                        dataset_id=dataset_id,
+                        model=model,
+                        intervention_id=intervention_id,
+                        intervention_name=intervention_name,
+                        metric_category="knn_metrics",
+                        metric_name="knn_recall",
+                        space=space,
+                        summary=distribution_summary(recall),
+                        null_value=null_recall,
+                        n_cells=n_cells,
+                        seed=seed,
+                        extra={"distance_metric": metric, "k": k, "diffusion_t": np.nan},
+                    )
+                )
+    return rows
+
+
+def _compute_diffusion_rows(
+    *,
+    knn_at_max: dict[tuple[str, str], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+    diffusion_spaces: tuple[str, ...],
+    distance_metrics: list[str],
+    k_sorted: list[int],
+    t_list: list[int],
+    cache_dir: Path,
+    dataset_id: str,
+    model: str,
+    intervention_id: str,
+    intervention_name: str,
+    seed: int,
+    n_cells: int,
+    n_null: int,
+    alpha: float,
+    bandwidth_k: int | None,
+    row_chunk: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for space in diffusion_spaces:
+        for metric in distance_metrics:
+            ref_dist_max, ref_idx_max, man_dist_max, man_idx_max = knn_at_max[(space, metric)]
+            for k in k_sorted:
+
+                def _build_ref_adj() -> sp.csr_matrix:
+                    return build_weighted_knn_adjacency_from_knn(
+                        ref_dist_max[:, :k],
+                        ref_idx_max[:, :k],
+                        alpha=alpha,
+                        bandwidth_k=bandwidth_k,
+                    )
+
+                def _build_man_adj() -> sp.csr_matrix:
+                    return build_weighted_knn_adjacency_from_knn(
+                        man_dist_max[:, :k],
+                        man_idx_max[:, :k],
+                        alpha=alpha,
+                        bandwidth_k=bandwidth_k,
+                    )
+
+                ref_powers = _load_or_compute_transition_powers(
+                    cache_dir,
+                    dataset_id=dataset_id,
+                    model=model,
+                    space=space,
+                    metric=metric,
+                    k=k,
+                    n_cells=n_cells,
+                    side="ref",
+                    adj_builder=_build_ref_adj,
+                    t_values=t_list,
+                )
+                man_powers = _load_or_compute_transition_powers(
+                    cache_dir,
+                    dataset_id=dataset_id,
+                    model=model,
+                    space=space,
+                    metric=metric,
+                    k=k,
+                    n_cells=n_cells,
+                    side=f"man_{intervention_id}",
+                    adj_builder=_build_man_adj,
+                    t_values=t_list,
+                )
+
+                for t in t_list:
+                    p_t = ref_powers[t]
+                    q_t = man_powers[t]
+                    sym_kl, js = sym_kl_js_per_cell(p_t, q_t, row_chunk=row_chunk)
+
+                    null_rng = np.random.default_rng(
+                        _diffusion_null_seed(seed, space, metric, k, t)
+                    )
+                    null_sym_sum = 0.0
+                    null_js_sum = 0.0
+                    for _ in range(n_null):
+                        perm = null_rng.permutation(n_cells)
+                        null_sym_mean, null_js_mean = _diffusion_sym_kl_js_means(
+                            p_t, q_t[perm], row_chunk=row_chunk
+                        )
+                        null_sym_sum += null_sym_mean
+                        null_js_sum += null_js_mean
+                    null_sym = null_sym_sum / n_null
+                    null_js_val = null_js_sum / n_null
+
+                    for metric_name, summary, null_val in (
+                        ("diffusion_sym_kl", distribution_summary(sym_kl), null_sym),
+                        ("diffusion_js", distribution_summary(js), null_js_val),
+                    ):
+                        rows.append(
+                            make_metric_row(
+                                dataset_id=dataset_id,
+                                model=model,
+                                intervention_id=intervention_id,
+                                intervention_name=intervention_name,
+                                metric_category="knn_metrics",
+                                metric_name=metric_name,
+                                space=space,
+                                summary=summary,
+                                null_value=null_val,
+                                n_cells=n_cells,
+                                seed=seed,
+                                extra={
+                                    "distance_metric": metric,
+                                    "k": k,
+                                    "diffusion_t": t,
+                                },
+                            )
+                        )
+    return rows
 
 
 # ----------------------------------------------------------------------------
@@ -413,7 +540,6 @@ def compute_knn_metrics(
     n_null_permutations: int = 1,
 ) -> pd.DataFrame:
     """Compute kNN overlap and diffusion KL/JS metrics for one intervention."""
-    rows: list[dict[str, Any]] = []
     n_cells = bundle.emb_ref.shape[0]
     k_sorted = sorted(int(k) for k in k_values)
     k_max = k_sorted[-1]
@@ -447,6 +573,26 @@ def compute_knn_metrics(
             return knn_cache.neighbors(mat, k_max, metric)
         return knn_neighbors(mat, k_max, metric)
 
+    def _neighbors_with_disk_cache(
+        mat: Any,
+        *,
+        metric: str,
+        space: str,
+        side: str,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        path = _knn_cache_path(
+            cache_dir,
+            dataset_id=dataset_id,
+            model=model,
+            space=space,
+            metric=metric,
+            k=k_max,
+            n_cells=n_cells,
+            side=side,
+        )
+        label = f"knn side={side} space={space} metric={metric} k={k_max} ({n_cells} cells)"
+        return load_or_build_pickle(path, lambda: _neighbors(mat, metric), label=label)
+
     spaces_needed = tuple(dict.fromkeys((*knn_spaces, *diffusion_spaces)))
     knn_at_max: dict[
         tuple[str, str],
@@ -462,8 +608,15 @@ def compute_knn_metrics(
                 metric,
                 k_max,
             )
-            ref_dist_max, ref_idx_max = _neighbors(ref_mat, metric)
-            man_dist_max, man_idx_max = _neighbors(man_mat, metric)
+            ref_dist_max, ref_idx_max = _neighbors_with_disk_cache(
+                ref_mat, metric=metric, space=space, side="ref"
+            )
+            man_dist_max, man_idx_max = _neighbors_with_disk_cache(
+                man_mat,
+                metric=metric,
+                space=space,
+                side=f"man_{intervention_id}",
+            )
             knn_at_max[(space, metric)] = (
                 ref_dist_max,
                 ref_idx_max,
@@ -471,127 +624,38 @@ def compute_knn_metrics(
                 man_idx_max,
             )
 
-    for space in knn_spaces:
-        for metric in distance_metrics:
-            _, ref_idx_max, _, man_idx_max = knn_at_max[(space, metric)]
-            for k in k_sorted:
-                ref_idx = ref_idx_max[:, :k]
-                man_idx = man_idx_max[:, :k]
-                recall = knn_overlap_per_cell(ref_idx, man_idx, k)
-
-                null_rng = np.random.default_rng(_knn_null_seed(seed, space, metric, k))
-                null_recall_sum = 0.0
-                for _ in range(n_null):
-                    perm = null_rng.permutation(n_cells)
-                    null_recall_cells = knn_overlap_per_cell(ref_idx, man_idx[perm], k)
-                    null_recall_sum += float(np.mean(null_recall_cells))
-                null_recall = null_recall_sum / n_null
-
-                rows.append(
-                    _row_metric_row(
-                        dataset_id=dataset_id,
-                        model=model,
-                        intervention_id=intervention_id,
-                        intervention_name=intervention_name,
-                        category="knn_metrics",
-                        metric_name="knn_recall",
-                        space=space,
-                        summary=distribution_summary(recall),
-                        null_value=null_recall,
-                        n_cells=n_cells,
-                        seed=seed,
-                        extra={
-                            "distance_metric": metric,
-                            "k": k,
-                            "diffusion_t": np.nan,
-                        },
-                    )
-                )
-
-    for space in diffusion_spaces:
-        for metric in distance_metrics:
-            ref_dist_max, ref_idx_max, man_dist_max, man_idx_max = knn_at_max[(space, metric)]
-            for k in k_sorted:
-                ref_adj = build_weighted_knn_adjacency_from_knn(
-                    ref_dist_max[:, :k],
-                    ref_idx_max[:, :k],
-                    alpha=alpha,
-                    bandwidth_k=bandwidth_k,
-                )
-                man_adj = build_weighted_knn_adjacency_from_knn(
-                    man_dist_max[:, :k],
-                    man_idx_max[:, :k],
-                    alpha=alpha,
-                    bandwidth_k=bandwidth_k,
-                )
-                ref_powers = _load_or_compute_transition_powers(
-                    cache_dir,
-                    dataset_id=dataset_id,
-                    model=model,
-                    space=space,
-                    metric=metric,
-                    k=k,
-                    n_cells=n_cells,
-                    side="ref",
-                    adj=ref_adj,
-                    t_values=t_list,
-                )
-                man_powers = _load_or_compute_transition_powers(
-                    cache_dir,
-                    dataset_id=dataset_id,
-                    model=model,
-                    space=space,
-                    metric=metric,
-                    k=k,
-                    n_cells=n_cells,
-                    side=f"man_{intervention_id}",
-                    adj=man_adj,
-                    t_values=t_list,
-                )
-
-                for t in t_list:
-                    p_t = ref_powers[t]
-                    q_t = man_powers[t]
-                    sym_kl, js = sym_kl_js_per_cell(p_t, q_t, row_chunk=row_chunk)
-
-                    null_rng = np.random.default_rng(
-                        _diffusion_null_seed(seed, space, metric, k, t)
-                    )
-                    null_sym_sum = 0.0
-                    null_js_sum = 0.0
-                    for _ in range(n_null):
-                        perm = null_rng.permutation(n_cells)
-                        null_sym_mean, null_js_mean = _diffusion_sym_kl_js_means(
-                            p_t, q_t[perm], row_chunk=row_chunk
-                        )
-                        null_sym_sum += null_sym_mean
-                        null_js_sum += null_js_mean
-                    null_sym = null_sym_sum / n_null
-                    null_js_val = null_js_sum / n_null
-
-                    for metric_name, summary, null_val in (
-                        ("diffusion_sym_kl", distribution_summary(sym_kl), null_sym),
-                        ("diffusion_js", distribution_summary(js), null_js_val),
-                    ):
-                        rows.append(
-                            _row_metric_row(
-                                dataset_id=dataset_id,
-                                model=model,
-                                intervention_id=intervention_id,
-                                intervention_name=intervention_name,
-                                category="knn_metrics",
-                                metric_name=metric_name,
-                                space=space,
-                                summary=summary,
-                                null_value=null_val,
-                                n_cells=n_cells,
-                                seed=seed,
-                                extra={
-                                    "distance_metric": metric,
-                                    "k": k,
-                                    "diffusion_t": t,
-                                },
-                            )
-                        )
+    rows = _compute_knn_recall_rows(
+        knn_at_max=knn_at_max,
+        knn_spaces=knn_spaces,
+        distance_metrics=distance_metrics,
+        k_sorted=k_sorted,
+        dataset_id=dataset_id,
+        model=model,
+        intervention_id=intervention_id,
+        intervention_name=intervention_name,
+        seed=seed,
+        n_cells=n_cells,
+        n_null=n_null,
+    )
+    rows.extend(
+        _compute_diffusion_rows(
+            knn_at_max=knn_at_max,
+            diffusion_spaces=diffusion_spaces,
+            distance_metrics=distance_metrics,
+            k_sorted=k_sorted,
+            t_list=t_list,
+            cache_dir=cache_dir,
+            dataset_id=dataset_id,
+            model=model,
+            intervention_id=intervention_id,
+            intervention_name=intervention_name,
+            seed=seed,
+            n_cells=n_cells,
+            n_null=n_null,
+            alpha=alpha,
+            bandwidth_k=bandwidth_k,
+            row_chunk=row_chunk,
+        )
+    )
 
     return pd.DataFrame(rows)

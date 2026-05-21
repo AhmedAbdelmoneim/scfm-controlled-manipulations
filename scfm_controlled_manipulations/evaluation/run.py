@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from scfm_controlled_manipulations.evaluation.context import load_dataset_context
+from scfm_controlled_manipulations.evaluation.metrics_cell_batch import log_cell_batch_obs_columns
 from scfm_controlled_manipulations.evaluation.metrics_common import VALUE_SUMMARY_COLUMNS
 from scfm_controlled_manipulations.evaluation.pool import (
     evaluation_mp_context,
@@ -46,10 +47,10 @@ from scfm_controlled_manipulations.sweep_config import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION: dict[str, Any] = {
-    "k_values": [15, 30],
+    "k_values": [5, 15, 50],
     "distance_metrics": ["euclidean"],
-    "diffusion_t_values": [1, 2, 3, 4, 5, 6, 7, 8],
-    "leiden_resolutions": [0.5, 1.0],
+    "diffusion_t_values": [1, 2, 4, 8, 16, 32],
+    "leiden_resolutions": [0.25, 0.5, 1.0, 2.0],
     "cell_type_col": "cell_type",
     "batch_col": "batch",
     "dataset_id": None,
@@ -63,10 +64,64 @@ DEFAULT_EVALUATION: dict[str, Any] = {
 }
 
 
+def _require_positive_int_list(values: Any, *, key: str) -> list[int]:
+    out = [int(v) for v in values]
+    if not out or any(v <= 0 for v in out):
+        raise ValueError(f"evaluation.{key} must be a non-empty list of positive integers")
+    return out
+
+
+def _require_positive_float_list(values: Any, *, key: str) -> list[float]:
+    out = [float(v) for v in values]
+    if not out or any(v <= 0 for v in out):
+        raise ValueError(f"evaluation.{key} must be a non-empty list of positive floats")
+    return out
+
+
+def validate_evaluation_config(ev: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize evaluation config values once at run start."""
+    validated = dict(ev)
+    validated["k_values"] = _require_positive_int_list(validated["k_values"], key="k_values")
+    validated["diffusion_t_values"] = _require_positive_int_list(
+        validated["diffusion_t_values"], key="diffusion_t_values"
+    )
+    validated["leiden_resolutions"] = _require_positive_float_list(
+        validated["leiden_resolutions"], key="leiden_resolutions"
+    )
+    distance_metrics = [str(m).strip() for m in validated["distance_metrics"]]
+    if not distance_metrics or any(not m for m in distance_metrics):
+        raise ValueError("evaluation.distance_metrics must be a non-empty list of strings")
+    validated["distance_metrics"] = distance_metrics
+
+    validated["evaluation_workers"] = max(1, int(validated["evaluation_workers"]))
+    mp_method = str(validated["evaluation_mp_start_method"]).strip().lower()
+    if mp_method not in {"fork", "spawn", "auto"}:
+        raise ValueError("evaluation.evaluation_mp_start_method must be fork, spawn, or auto")
+    validated["evaluation_mp_start_method"] = mp_method
+
+    validated["stats_shift_pairwise_cell_subsample_n"] = int(
+        validated["stats_shift_pairwise_cell_subsample_n"]
+    )
+    if validated["stats_shift_pairwise_cell_subsample_n"] <= 0:
+        raise ValueError("evaluation.stats_shift_pairwise_cell_subsample_n must be > 0")
+    pairwise_max = validated.get("stats_shift_pairwise_max_pairs")
+    if pairwise_max is not None:
+        pairwise_max = int(pairwise_max)
+        if pairwise_max <= 0:
+            raise ValueError("evaluation.stats_shift_pairwise_max_pairs must be > 0 or null")
+    validated["stats_shift_pairwise_max_pairs"] = pairwise_max
+
+    validated["knn_alpha"] = float(validated["knn_alpha"])
+    bw_raw = validated.get("knn_bandwidth_k")
+    validated["knn_bandwidth_k"] = int(bw_raw) if bw_raw is not None else None
+    validated["knn_n_null_permutations"] = max(1, int(validated["knn_n_null_permutations"]))
+    return validated
+
+
 def merge_evaluation_config(cfg: dict[str, Any]) -> dict[str, Any]:
     merged = dict(DEFAULT_EVALUATION)
     merged.update(cfg.get("evaluation") or {})
-    return merged
+    return validate_evaluation_config(merged)
 
 
 def _optional_obs_column(value: Any) -> str | None:
@@ -111,7 +166,7 @@ def _planned_interventions(
 def append_raw_embedding_gain_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Append rows with ``metric_category`` suffix ``_gain`` (embedding minus raw) where both exist."""
     gain_rows: list[dict[str, Any]] = []
-    for cat in ("embedding_shift", "knn_metrics", "clustering_metrics"):
+    for cat in ("embedding_shift", "knn_metrics"):
         sub = df[df["metric_category"] == cat]
         if sub.empty or "space" not in sub.columns:
             continue
@@ -286,6 +341,11 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         "Reference raw loaded: n_cells=%d (%.1fs)",
         dataset_ctx.n_cells,
         time.perf_counter() - t0,
+    )
+    log_cell_batch_obs_columns(
+        dataset_ctx.obs,
+        cell_type_col=cell_type_col,
+        batch_col=batch_col,
     )
 
     completed_jobs = 0

@@ -9,9 +9,8 @@ import pandas as pd
 import scipy.sparse as sp
 
 from scfm_controlled_manipulations.evaluation.metrics_common import (
-    DistributionSummary,
     distribution_summary,
-    summary_to_row_fields,
+    make_metric_row,
 )
 
 
@@ -109,38 +108,6 @@ def _pairwise_cosine_dense(
         return np.where(denom > 0, dots / denom, np.nan)
 
 
-def _row_metric(
-    *,
-    dataset_id: str,
-    model: str,
-    intervention_id: str,
-    intervention_name: str,
-    category: str,
-    metric_name: str,
-    space: str,
-    summary: DistributionSummary,
-    n_cells: int,
-    seed: int,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        "dataset_id": dataset_id,
-        "model": model,
-        "intervention_id": intervention_id,
-        "intervention_name": intervention_name,
-        "metric_category": category,
-        "metric_name": metric_name,
-        "space": space,
-        **summary_to_row_fields(summary),
-        "null_value": np.nan,
-        "n_cells": n_cells,
-        "seed": seed,
-    }
-    if extra:
-        row.update(extra)
-    return row
-
-
 def _append_stats_rows(
     rows: list[dict[str, Any]],
     *,
@@ -177,10 +144,17 @@ def _append_stats_rows(
         ("col_variance_man", man_col_variances),
     ):
         rows.append(
-            _row_metric(
-                **base,
+            make_metric_row(
+                dataset_id=base["dataset_id"],
+                model=base["model"],
+                intervention_id=base["intervention_id"],
+                intervention_name=base["intervention_name"],
+                metric_category=base["category"],
                 metric_name=metric_name,
+                space=base["space"],
                 summary=distribution_summary(values),
+                n_cells=base["n_cells"],
+                seed=base["seed"],
             )
         )
 
@@ -322,31 +296,59 @@ def compute_embedding_shift(
             seed=seed,
         )
         rows.append(
-            _row_metric(
-                **base,
+            make_metric_row(
+                dataset_id=base["dataset_id"],
+                model=base["model"],
+                intervention_id=base["intervention_id"],
+                intervention_name=base["intervention_name"],
+                metric_category=base["category"],
                 metric_name="paired_cell_l2_norm",
+                space=base["space"],
                 summary=distribution_summary(paired_norms),
+                n_cells=base["n_cells"],
+                seed=base["seed"],
             )
         )
         rows.append(
-            _row_metric(
-                **base,
+            make_metric_row(
+                dataset_id=base["dataset_id"],
+                model=base["model"],
+                intervention_id=base["intervention_id"],
+                intervention_name=base["intervention_name"],
+                metric_category=base["category"],
                 metric_name="within_ref_pairwise_l2",
+                space=base["space"],
                 summary=distribution_summary(ref_within),
+                n_cells=base["n_cells"],
+                seed=base["seed"],
             )
         )
         rows.append(
-            _row_metric(
-                **base,
+            make_metric_row(
+                dataset_id=base["dataset_id"],
+                model=base["model"],
+                intervention_id=base["intervention_id"],
+                intervention_name=base["intervention_name"],
+                metric_category=base["category"],
                 metric_name="within_man_pairwise_l2",
+                space=base["space"],
                 summary=distribution_summary(man_within),
+                n_cells=base["n_cells"],
+                seed=base["seed"],
             )
         )
         rows.append(
-            _row_metric(
-                **base,
+            make_metric_row(
+                dataset_id=base["dataset_id"],
+                model=base["model"],
+                intervention_id=base["intervention_id"],
+                intervention_name=base["intervention_name"],
+                metric_category=base["category"],
                 metric_name="shift_pairwise_cosine",
+                space=base["space"],
                 summary=distribution_summary(shift_pairwise_cosine),
+                n_cells=base["n_cells"],
+                seed=base["seed"],
             )
         )
 

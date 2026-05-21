@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from pathlib import Path
 import time
 from typing import Any
 
@@ -10,11 +12,12 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import adjusted_rand_score
 
+from scfm_controlled_manipulations.evaluation.disk_cache import load_or_build_pickle
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.evaluation.metrics_common import (
     DistributionSummary,
+    make_metric_row,
     scalar_summary,
-    summary_to_row_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,10 @@ def clustering_stability(
     metric: str,
     resolution: float,
     seed: int,
+    cache_dir: Path | None = None,
+    dataset_id: str | None = None,
+    model: str | None = None,
+    intervention_id: str | None = None,
     leiden_cache: LeidenCache | None = None,
 ) -> dict[str, float]:
     ref_clusters = run_leiden_labels(
@@ -52,14 +59,38 @@ def clustering_stability(
         seed=seed,
         leiden_cache=leiden_cache,
     )
-    man_clusters = run_leiden_labels(
-        man_mat,
-        k=k,
-        metric=metric,
-        resolution=resolution,
-        seed=seed,
-        leiden_cache=None,
-    )
+    if cache_dir is not None and dataset_id and model and intervention_id:
+        payload = (
+            f"{dataset_id}|{model}|{intervention_id}|{man_mat.shape[0]}|"
+            f"{metric}|{k}|{resolution}|{seed}"
+        )
+        digest = hashlib.sha256(payload.encode()).hexdigest()[:20]
+        cache_path = cache_dir / f"leiden_man_{digest}.pkl"
+        label = (
+            f"leiden man intervention={intervention_id} metric={metric} "
+            f"k={k} resolution={resolution}"
+        )
+        man_clusters = load_or_build_pickle(
+            cache_path,
+            lambda: run_leiden_labels(
+                man_mat,
+                k=k,
+                metric=metric,
+                resolution=resolution,
+                seed=seed,
+                leiden_cache=None,
+            ),
+            label=label,
+        )
+    else:
+        man_clusters = run_leiden_labels(
+            man_mat,
+            k=k,
+            metric=metric,
+            resolution=resolution,
+            seed=seed,
+            leiden_cache=None,
+        )
     return {
         "ari": float(adjusted_rand_score(ref_clusters, man_clusters)),
         "n_ref_clusters": float(len(np.unique(ref_clusters))),
@@ -83,24 +114,25 @@ def _row(
     n_ref_clusters: float,
     n_manip_clusters: float,
 ) -> dict[str, Any]:
-    return {
-        "dataset_id": dataset_id,
-        "model": model,
-        "intervention_id": intervention_id,
-        "intervention_name": intervention_name,
-        "metric_category": "clustering_metrics",
-        "metric_name": metric_name,
-        "space": "embedding",
-        **summary_to_row_fields(summary),
-        "null_value": np.nan,
-        "n_cells": n_cells,
-        "seed": seed,
-        "distance_metric": distance_metric,
-        "k": k,
-        "resolution": resolution,
-        "n_ref_clusters": n_ref_clusters,
-        "n_manip_clusters": n_manip_clusters,
-    }
+    return make_metric_row(
+        dataset_id=dataset_id,
+        model=model,
+        intervention_id=intervention_id,
+        intervention_name=intervention_name,
+        metric_category="clustering_metrics",
+        metric_name=metric_name,
+        space="embedding",
+        summary=summary,
+        n_cells=n_cells,
+        seed=seed,
+        extra={
+            "distance_metric": distance_metric,
+            "k": k,
+            "resolution": resolution,
+            "n_ref_clusters": n_ref_clusters,
+            "n_manip_clusters": n_manip_clusters,
+        },
+    )
 
 
 def compute_clustering_metrics(
@@ -114,6 +146,7 @@ def compute_clustering_metrics(
     distance_metrics: list[str],
     k_values: list[int],
     leiden_resolutions: list[float],
+    cache_dir: Path | None = None,
     leiden_cache: LeidenCache | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
@@ -141,6 +174,10 @@ def compute_clustering_metrics(
                     metric=metric,
                     resolution=resolution,
                     seed=seed,
+                    cache_dir=cache_dir,
+                    dataset_id=dataset_id,
+                    model=model,
+                    intervention_id=intervention_id,
                     leiden_cache=leiden_cache,
                 )
                 logger.info(

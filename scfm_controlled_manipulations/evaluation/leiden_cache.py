@@ -88,15 +88,6 @@ def init_leiden_isolate_pool() -> None:
         _ensure_leiden_isolate_pool()
 
 
-def shutdown_leiden_isolate_pool() -> None:
-    global _LEIDEN_ISOLATE_POOL, _LEIDEN_ISOLATE_POOL_PID
-    if _LEIDEN_ISOLATE_POOL is not None:
-        _LEIDEN_ISOLATE_POOL.close()
-        _LEIDEN_ISOLATE_POOL.join()
-        _LEIDEN_ISOLATE_POOL = None
-        _LEIDEN_ISOLATE_POOL_PID = None
-
-
 def leiden_labels_for_matrix(
     mat: np.ndarray,
     *,
@@ -123,7 +114,6 @@ def leiden_labels_for_matrix(
 class LeidenCache:
     """Thread-safe cache for neighbors graphs and Leiden cluster labels."""
 
-    _neighbors: dict[tuple[int, str, int, int], ad.AnnData] = field(default_factory=dict)
     _labels: dict[tuple[int, str, int, float, int], np.ndarray] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 

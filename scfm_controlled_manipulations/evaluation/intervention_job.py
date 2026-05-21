@@ -171,6 +171,7 @@ def evaluate_intervention(
             distance_metrics=distance_metrics,
             k_values=k_values,
             leiden_resolutions=leiden_resolutions,
+            cache_dir=cache_path,
             leiden_cache=model_ctx.leiden_cache,
         )
     )

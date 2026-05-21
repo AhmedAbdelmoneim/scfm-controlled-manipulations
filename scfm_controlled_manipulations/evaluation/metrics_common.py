@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -93,3 +94,36 @@ def summary_to_row_fields(summary: DistributionSummary) -> dict[str, float]:
         "value_q75": summary.q75,
         "value_q95": summary.q95,
     }
+
+
+def make_metric_row(
+    *,
+    dataset_id: str,
+    model: str,
+    intervention_id: str,
+    intervention_name: str,
+    metric_category: str,
+    metric_name: str,
+    space: str,
+    summary: DistributionSummary,
+    n_cells: int,
+    seed: int,
+    null_value: float = float("nan"),
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "model": model,
+        "intervention_id": intervention_id,
+        "intervention_name": intervention_name,
+        "metric_category": metric_category,
+        "metric_name": metric_name,
+        "space": space,
+        **summary_to_row_fields(summary),
+        "null_value": null_value,
+        "n_cells": n_cells,
+        "seed": seed,
+    }
+    if extra:
+        row.update(extra)
+    return row
