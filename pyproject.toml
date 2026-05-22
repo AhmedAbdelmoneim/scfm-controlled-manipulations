@@ -28,6 +28,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pip",
+    "pyensembl>=2.3.13",
     "pyarrow",
     "python-dotenv",
     "pyyaml",
