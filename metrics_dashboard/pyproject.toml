@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "metrics-dashboard"
+version = "0.1.0"
+description = "Streamlit dashboard for SCEval evaluation metrics"
+requires-python = "~=3.11.0"
+dependencies = [
+    "anndata",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "seaborn",
+    "streamlit>=1.30",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["metrics_dashboard"]

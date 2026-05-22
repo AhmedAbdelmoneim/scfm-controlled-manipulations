@@ -84,6 +84,11 @@ test:
 smoke-eval:
 	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml --n-cells 200 --n-genes 400 --emb-dim 32 --max-interventions 1
 
+## Streamlit metrics dashboard (metrics_dashboard/)
+.PHONY: dashboard
+dashboard:
+	uv run --directory metrics_dashboard streamlit run Home.py
+
 
 
 #################################################################################
