@@ -11,19 +11,106 @@ The manipulation step reads an input `.h5ad`, writes embedding-ready inputs unde
 make manipulate
 ```
 
-The analysis step expects one embedding `.h5ad` per model and intervention ID under
-`embeddings_root/{model}/{intervention_id}.h5ad`, computes configured metrics, and writes parquet
-tables under `results_dir/metrics`.
+The **evaluate** step compares each manipulation to the reference in both **raw** (manipulated
+`.h5ad` under `results_dir/manipulations`) and **embedding** space
+(`embeddings_root/{model}/{model}_{intervention_id}.h5ad`), and writes one consolidated CSV per model
+under `results_dir/evaluation/`. Run this after embeddings exist for each manipulation variant.
 
-```bash
-make analyze
+Expected layout per dataset (e.g. `processed/arterial/`):
+
+```text
+embeddings/
+  pca/pca_reference.h5ad
+  pca/pca_{intervention_id}.h5ad
+  geneformer/geneformer_reference.h5ad
+  ...
+results/
+  manipulations/reference.h5ad
+  manipulations/{intervention_id}.h5ad
+  manipulations/hvg.txt
+  evaluation/{model}_metrics.csv    # written by evaluate
 ```
 
-Both targets use `configs/default.yaml` by default. To run a different config:
+```bash
+make evaluate
+```
+
+| Command | Purpose | Main outputs |
+|---------|---------|--------------|
+| `make manipulate` | Run interventions on `input_h5ad` | `results_dir/manipulations/*.h5ad`, `reference.h5ad`, `hvg.txt` |
+| `make evaluate` | Structure metrics (stats, shift, kNN+diffusion, clustering, cell/batch) | `results_dir/evaluation/{model}_metrics.csv` |
+
+Both use the same `CONFIG` (default `configs/default.yaml`). Evaluation hyperparameters live under
+the top-level `evaluation:` key (see `configs/default.yaml`). Diffusion transitions are cached under
+`results_dir/evaluation_cache/`.
+
+Set `evaluation.evaluation_workers` to parallelize across interventions (e.g. `80` on a large node).
+Each worker is a **process** pinned to **one** BLAS/sklearn thread; limits are applied in
+`scripts/lib/eval_runtime_env.sh` and in Python before numpy loads. Evaluation workers always use
+the `spawn` start method for OpenMP safety, and Leiden runs in-process within each worker.
+Diffusion pickles live under `evaluation_cache/` with file locking.
+
+**One atlas in the background:**
+
+```bash
+nohup scripts/run_one_evaluation.sh lung > run_logs/batch_eval_lung.log 2>&1 &
+```
+
+**Non-default venv** (once per machine): `echo .venv-05 > .python-env` or `export SCFM_UV_ENV=.venv-05`.
+
+### Evaluation output schema
+
+Each model writes `results_dir/evaluation/{model}_metrics.csv`. Every row includes
+`dataset_id`, `model`, `intervention_id`, `intervention_name`, `metric_category`, `metric_name`,
+`space`, `value_mean`, `value_median`, `value_std`, `value_min`, `value_max`, `value_q05`,
+`value_q25`, `value_q75`, `value_q95`, `null_value` (when applicable), `n_cells`, and `seed`.
+Additional columns depend on the category (`distance_metric`, `k`, `diffusion_t`, `resolution`,
+`metadata_type`, etc.).
+
+**Summary columns:** For distribution-based metrics, the `value_*` columns summarize a per-cell (or
+per-dimension / per-pair) array: mean, median, sample std, min, max, and quantiles (5/25/75/95%).
+Global metrics (silhouette, Leiden ARI) set quantiles and often `value_std` to `NaN`.
+Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
+
+**Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
+append embedding-minus-raw differences for all summary columns except `value_std` (left `NaN`).
+
+**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, `diffusion_js`, and
+`classifier_roc_auc_ovr_macro_cv_mean` include broken-pairing nulls in `null_value` (mean over
+cells; optional multi-shuffle average via `knn_n_null_permutations`). Diffusion uses a PHATE-style
+alpha-decay kNN kernel (`knn_alpha`, default 10); set `knn_alpha: 2` for a Gaussian-like kernel.
+Clear `results/evaluation_cache/` after changing diffusion kernel settings.
+
+### Evaluation metrics (by category)
+
+| Category | Space(s) | Metric | Description |
+|----------|----------|--------|-------------|
+| `embedding_stats` | `raw`, `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution |
+| | | `col_mean_ref` / `_man` | Per-gene / per-dim mean distribution |
+| | | `col_variance_ref` / `_man` | Per-gene / per-dim variance distribution |
+| `embedding_shift` | `raw`, `embedding` | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (all aligned cells) |
+| | | `shift_pairwise_cosine` | Subsampled cos(shift_i, shift_j) for shift_i = man_i − ref_i |
+| | | `within_ref_pairwise_l2` | Subsampled all-pairs spread in reference |
+| | | `within_man_pairwise_l2` | Same cell subset, all-pairs spread in manipulation |
+| `knn_metrics` | `raw`, `embedding` | `knn_recall` | kNN neighborhood recall vs reference (+ permutation null) |
+| | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
+| | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
+| `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
+| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette (scIB; requires `cell_type_col`) |
+| | | `batch_ilisi` | Batch iLISI — local batch mixing (scIB; requires `batch_col`) |
+
+iLISI recomputes a kNN graph on the evaluation embedding via scanpy.
+
+Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
+`knn_alpha`, `knn_bandwidth_k`, `knn_n_null_permutations`, `leiden_resolutions`,
+`cell_type_col`, `batch_col`, `dataset_id`,
+`stats_shift_pairwise_cell_subsample_n`, `stats_shift_pairwise_max_pairs`.
+
+To run a different config:
 
 ```bash
 make manipulate CONFIG=configs/my-run.yaml
-make analyze CONFIG=configs/my-run.yaml
+make evaluate CONFIG=configs/my-run.yaml
 ```
 
 Interventions are configured as YAML entries with a registry `name` and optional `kwargs`:
@@ -63,8 +150,9 @@ seed and operation-specific metadata.
 The manipulation directory also includes:
 
 - `reference.h5ad`: the prepared, slimmed reference AnnData from the input dataset.
-- `hvg.txt`: one gene symbol per line for the top `hvg_n_top_genes` highly variable genes. These are
-  computed from the raw input counts with `scanpy.pp.highly_variable_genes(flavor="seurat_v3")`.
+- `hvg.txt`: one gene symbol per line for the top `hvg_n_top_genes` highly variable genes. When
+  `adata.raw` is present and matches the main matrix shape, HVGs are computed from `adata.raw.X`
+  (counts); otherwise from `adata.X`.
 
 The CLI uses Python logging and defaults to `log_level: INFO`. Set `log_level: DEBUG`, `WARNING`,
 or another standard logging level in the config to adjust verbosity.

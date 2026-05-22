@@ -146,6 +146,7 @@ celerybeat.pid
 
 # Environments
 .env
+.python-env
 .venv
 env/
 venv/
@@ -190,6 +191,11 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# custom configs
-configs/experiments/
-scripts/
+# custom configs (track templates; per-run generated configs stay local)
+configs/experiments/*
+
+# batch run logs
+run_logs/
+
+# local-only scripts (batch helpers are tracked below)
+scripts/*
