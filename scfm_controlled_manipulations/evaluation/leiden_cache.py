@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import multiprocessing as mp
-import os
 import threading
 from typing import Any
 
 import anndata as ad
 import numpy as np
 import scanpy as sc
-
-from scfm_controlled_manipulations.compute_env import apply_thread_limits
-
-_LEIDEN_ISOLATE_POOL: mp.pool.Pool | None = None
-_LEIDEN_ISOLATE_POOL_PID: int | None = None
 
 
 def scanpy_leiden_kwargs() -> dict[str, Any]:
@@ -54,38 +47,9 @@ def _leiden_labels_compute(
     return adata_tmp.obs["leiden_eval"].astype(str).to_numpy()
 
 
-def _leiden_spawn_entry(
-    payload: tuple[np.ndarray, int, str, float, int],
-) -> np.ndarray:
-    """Picklable entry for a fresh spawn child (no inherited OpenMP from fork workers)."""
-    apply_thread_limits(threads_per_process=1)
-    mat, k, metric, resolution, seed = payload
-    return _leiden_labels_compute(
-        mat,
-        k=k,
-        metric=metric,
-        resolution=resolution,
-        seed=seed,
-    )
-
-
-def _ensure_leiden_isolate_pool() -> mp.pool.Pool:
-    """One spawn worker per fork-pool process for Leiden after kNN/OpenMP."""
-    global _LEIDEN_ISOLATE_POOL, _LEIDEN_ISOLATE_POOL_PID
-    pid = os.getpid()
-    if _LEIDEN_ISOLATE_POOL is None or _LEIDEN_ISOLATE_POOL_PID != pid:
-        if _LEIDEN_ISOLATE_POOL is not None:
-            _LEIDEN_ISOLATE_POOL.close()
-            _LEIDEN_ISOLATE_POOL.join()
-        _LEIDEN_ISOLATE_POOL = mp.get_context("spawn").Pool(1)
-        _LEIDEN_ISOLATE_POOL_PID = pid
-    return _LEIDEN_ISOLATE_POOL
-
-
 def init_leiden_isolate_pool() -> None:
-    """Call from fork pool worker initializer before any Leiden in that worker."""
-    if mp.current_process().name != "MainProcess":
-        _ensure_leiden_isolate_pool()
+    """Backward-compatible no-op; Leiden now runs in the current worker process."""
+    return None
 
 
 def leiden_labels_for_matrix(
@@ -96,18 +60,15 @@ def leiden_labels_for_matrix(
     resolution: float,
     seed: int,
 ) -> np.ndarray:
-    """Run neighbors + Leiden; use a spawn subprocess inside fork pool workers."""
+    """Run neighbors + Leiden in the current process."""
     payload = (np.asarray(mat), int(k), str(metric), float(resolution), int(seed))
-    if mp.current_process().name == "MainProcess":
-        return _leiden_labels_compute(
-            payload[0],
-            k=payload[1],
-            metric=payload[2],
-            resolution=payload[3],
-            seed=payload[4],
-        )
-    pool = _ensure_leiden_isolate_pool()
-    return pool.apply(_leiden_spawn_entry, (payload,))
+    return _leiden_labels_compute(
+        payload[0],
+        k=payload[1],
+        metric=payload[2],
+        resolution=payload[3],
+        seed=payload[4],
+    )
 
 
 @dataclass

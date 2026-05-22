@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-def _read_pickle(path: Path) -> T:
+def read_pickle_cache(path: Path) -> T:
+    """Load a pickle written by :func:`load_or_build_pickle`."""
     with open(path, "rb") as handle:
         return pickle.load(handle)
 
@@ -46,7 +47,7 @@ def load_or_build_pickle(
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         logger.debug("disk cache hit: %s (%s)", path.name, label)
-        return _read_pickle(path)
+        return read_pickle_cache(path)
 
     if fcntl is None:
         logger.warning(
@@ -54,7 +55,7 @@ def load_or_build_pickle(
             label,
         )
         if path.is_file():
-            return _read_pickle(path)
+            return read_pickle_cache(path)
         value = builder()
         _write_pickle_atomic(path, value)
         return value
@@ -64,7 +65,7 @@ def load_or_build_pickle(
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
         if path.is_file():
             logger.debug("disk cache hit after lock: %s (%s)", path.name, label)
-            return _read_pickle(path)
+            return read_pickle_cache(path)
 
         logger.info("disk cache miss — building %s", label)
         value = builder()

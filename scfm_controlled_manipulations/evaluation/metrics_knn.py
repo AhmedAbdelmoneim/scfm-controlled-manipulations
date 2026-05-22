@@ -24,7 +24,10 @@ import pandas as pd
 import scipy.sparse as sp
 from sklearn.neighbors import NearestNeighbors
 
-from scfm_controlled_manipulations.evaluation.disk_cache import load_or_build_pickle
+from scfm_controlled_manipulations.evaluation.disk_cache import (
+    load_or_build_pickle,
+    read_pickle_cache,
+)
 from scfm_controlled_manipulations.evaluation.metrics_common import (
     distribution_summary,
     make_metric_row,
@@ -281,6 +284,25 @@ def _cache_path(
     return cache_dir / f"diffusion_{h}.pkl"
 
 
+def _transition_bundle_cache_path(
+    cache_dir: Path,
+    *,
+    dataset_id: str,
+    model: str,
+    space: str,
+    metric: str,
+    k: int,
+    n_cells: int,
+    side: str,
+    t_values: list[int],
+) -> Path:
+    t_tag = "_".join(str(int(t)) for t in sorted({int(t) for t in t_values}))
+    payload = f"{dataset_id}|{model}|{space}|{metric}|{k}|{n_cells}|{side}|bundle|{t_tag}"
+    h = hashlib.sha256(payload.encode()).hexdigest()[:20]
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"diffusion_bundle_{h}.pkl"
+
+
 def _knn_cache_path(
     cache_dir: Path,
     *,
@@ -311,8 +333,17 @@ def _load_or_compute_transition_powers(
     adj_builder: Callable[[], sp.csr_matrix],
     t_values: list[int],
 ) -> dict[int, sp.csr_matrix]:
-    """Return T^t for each requested t, reading per-t pickles where present."""
-    paths = {
+    """Return T^t for each requested t.
+
+    Uses a single on-disk bundle per (side, k, metric, t-list) so only one process
+    builds the expensive transition powers under the file lock. Older per-t pickles are
+    still read when a complete set is already present.
+    """
+    t_list = sorted({int(t) for t in t_values if int(t) >= 1})
+    if not t_list:
+        return {}
+
+    per_t_paths = {
         t: _cache_path(
             cache_dir,
             dataset_id=dataset_id,
@@ -324,33 +355,114 @@ def _load_or_compute_transition_powers(
             n_cells=n_cells,
             side=side,
         )
-        for t in t_values
+        for t in t_list
     }
-    missing = [t for t in t_values if not paths[t].exists()]
-    if missing:
+    if all(path.is_file() for path in per_t_paths.values()):
+        return {t: read_pickle_cache(per_t_paths[t]) for t in t_list}
+
+    bundle_path = _transition_bundle_cache_path(
+        cache_dir,
+        dataset_id=dataset_id,
+        model=model,
+        space=space,
+        metric=metric,
+        k=k,
+        n_cells=n_cells,
+        side=side,
+        t_values=t_list,
+    )
+    label = (
+        f"diffusion bundle space={space} metric={metric} k={k} side={side} "
+        f"t={t_list} ({n_cells} cells)"
+    )
+
+    def build_bundle() -> dict[int, sp.csr_matrix]:
         logger.info(
-            "transitions: side=%s k=%d computing %d/%d missing via squaring",
+            "transitions: side=%s k=%d building bundle for t=%s (%d cells)",
             side,
             k,
-            len(missing),
-            len(t_values),
+            t_list,
+            n_cells,
         )
         adj = adj_builder()
-        precomputed = transition_powers(adj, missing)
-    else:
-        precomputed = {}
+        return transition_powers(adj, t_list)
 
-    out: dict[int, sp.csr_matrix] = {}
-    for t in t_values:
-        label = (
-            f"diffusion space={space} metric={metric} k={k} t={t} side={side} ({n_cells} cells)"
-        )
+    bundle = load_or_build_pickle(bundle_path, build_bundle, label=label)
+    return {t: bundle[t] for t in t_list}
 
-        def builder(t=t):
-            return precomputed[t]
 
-        out[t] = load_or_build_pickle(paths[t], builder, label=label)
-    return out
+def prewarm_reference_evaluation_disk_cache(
+    *,
+    cache_dir: Path,
+    dataset_id: str,
+    model: str,
+    raw_ref: Any,
+    emb_ref: Any,
+    n_cells: int,
+    k_values: list[int],
+    distance_metrics: list[str],
+    diffusion_t_values: list[int],
+    alpha: float = 10.0,
+    bandwidth_k: int | None = None,
+) -> None:
+    """Build shared reference kNN + diffusion bundles once before parallel workers start."""
+    if not k_values or not distance_metrics:
+        return
+
+    k_sorted = sorted(int(k) for k in k_values)
+    k_max = k_sorted[-1]
+    t_list = list(diffusion_t_values)
+
+    for space, ref_mat in (("raw", raw_ref), ("embedding", emb_ref)):
+        for metric in distance_metrics:
+            knn_path = _knn_cache_path(
+                cache_dir,
+                dataset_id=dataset_id,
+                model=model,
+                space=space,
+                metric=metric,
+                k=k_max,
+                n_cells=n_cells,
+                side="ref",
+            )
+            knn_label = f"knn side=ref space={space} metric={metric} k={k_max} ({n_cells} cells)"
+            ref_dist_max, ref_idx_max = load_or_build_pickle(
+                knn_path,
+                lambda ref_mat=ref_mat, metric=metric: knn_neighbors(
+                    ref_mat, k_max, metric, n_jobs=1
+                ),
+                label=knn_label,
+            )
+
+            if space != "embedding" or not t_list:
+                continue
+
+            for k in k_sorted:
+
+                def _build_ref_adj(
+                    k: int = k,
+                    ref_dist_max: np.ndarray = ref_dist_max,
+                    ref_idx_max: np.ndarray = ref_idx_max,
+                ) -> sp.csr_matrix:
+                    return build_weighted_knn_adjacency_from_knn(
+                        ref_dist_max[:, :k],
+                        ref_idx_max[:, :k],
+                        alpha=alpha,
+                        bandwidth_k=bandwidth_k,
+                    )
+
+                _load_or_compute_transition_powers(
+                    cache_dir,
+                    dataset_id=dataset_id,
+                    model=model,
+                    space=space,
+                    metric=metric,
+                    k=k,
+                    n_cells=n_cells,
+                    side="ref",
+                    adj_builder=_build_ref_adj,
+                    t_values=t_list,
+                )
 
 
 def _compute_knn_recall_rows(

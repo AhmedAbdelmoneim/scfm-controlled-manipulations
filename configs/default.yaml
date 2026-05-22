@@ -53,8 +53,6 @@ evaluation:
   dataset_id: null
   # Process pool size (each worker uses 1 BLAS/sklearn thread). Diffusion matrices cache on disk.
   evaluation_workers: 48
-  # fork | spawn | auto — fork on Linux shares reference data; workers use leidenalg for Leiden.
-  evaluation_mp_start_method: fork
   # Within-ref / within-man pairwise spread only (cell subsample then all-pairs).
   stats_shift_pairwise_cell_subsample_n: 500
   stats_shift_pairwise_max_pairs: 10000

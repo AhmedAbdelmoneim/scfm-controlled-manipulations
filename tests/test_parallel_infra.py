@@ -37,5 +37,48 @@ class DiskCacheTest(unittest.TestCase):
             self.assertEqual(load_or_build_pickle(path, builder, label="test"), 42)
             self.assertEqual(calls["n"], 1)
 
+
+class TransitionBundleCacheTest(unittest.TestCase):
+    def test_transition_bundle_builder_runs_once(self) -> None:
+        import numpy as np
+        import scipy.sparse as sp
+
+        from scfm_controlled_manipulations.evaluation.metrics_knn import (
+            _load_or_compute_transition_powers,
+        )
+
+        rng = np.random.default_rng(0)
+        mat = rng.standard_normal((64, 8))
+        calls = {"n": 0}
+
+        def adj_builder() -> sp.csr_matrix:
+            from scfm_controlled_manipulations.evaluation.metrics_knn import (
+                build_weighted_knn_adjacency,
+            )
+
+            calls["n"] += 1
+            return build_weighted_knn_adjacency(mat, k=5, metric="euclidean")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            kwargs = dict(
+                cache_dir=cache_dir,
+                dataset_id="ds",
+                model="pca",
+                space="embedding",
+                metric="euclidean",
+                k=5,
+                n_cells=64,
+                side="ref",
+                adj_builder=adj_builder,
+                t_values=[1, 2, 4],
+            )
+            first = _load_or_compute_transition_powers(**kwargs)
+            second = _load_or_compute_transition_powers(**kwargs)
+            self.assertEqual(set(first.keys()), {1, 2, 4})
+            self.assertEqual(set(second.keys()), {1, 2, 4})
+            self.assertEqual(calls["n"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

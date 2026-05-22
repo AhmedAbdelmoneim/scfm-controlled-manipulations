@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import unittest
-from typing import Any
 from pathlib import Path
+from typing import Any
+import unittest
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors, knn_overlap_per_cell
+from scfm_controlled_manipulations.evaluation.metrics_knn import (
+    knn_neighbors,
+    knn_overlap_per_cell,
+)
 from scfm_controlled_manipulations.io import embedding_path, manipulation_path
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
@@ -46,7 +49,6 @@ class SweepTest(unittest.TestCase):
 
 class KnnMaxSliceTest(unittest.TestCase):
     def test_slice_matches_direct_knn(self) -> None:
-        from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors
 
         rng = np.random.default_rng(2)
         mat = rng.standard_normal((40, 6))
@@ -64,7 +66,7 @@ class LeidenMpSafetyTest(unittest.TestCase):
         self.assertEqual(kw["flavor"], "igraph")
         self.assertIn("n_iterations", kw)
 
-    def test_fork_worker_delegates_leiden_to_spawn_pool(self) -> None:
+    def test_leiden_labels_runs_in_process(self) -> None:
         from unittest import mock
 
         import numpy as np
@@ -74,37 +76,19 @@ class LeidenMpSafetyTest(unittest.TestCase):
         mat = np.random.default_rng(0).standard_normal((40, 8)).astype(np.float32)
         fake_labels = np.array(["0", "1"] * 20)
 
-        mock_pool = mock.MagicMock()
-        mock_pool.apply.return_value = fake_labels
-
-        with (
-            mock.patch(
-                "scfm_controlled_manipulations.evaluation.leiden_cache.mp.current_process"
-            ) as proc,
-            mock.patch(
-                "scfm_controlled_manipulations.evaluation.leiden_cache._ensure_leiden_isolate_pool",
-                return_value=mock_pool,
-            ),
-        ):
-            proc.return_value.name = "ForkProcess-8"
+        with mock.patch(
+            "scfm_controlled_manipulations.evaluation.leiden_cache._leiden_labels_compute",
+            return_value=fake_labels,
+        ) as compute:
             out = leiden_labels_for_matrix(mat, k=5, metric="euclidean", resolution=0.5, seed=0)
 
         self.assertTrue(np.array_equal(out, fake_labels))
-        mock_pool.apply.assert_called_once()
+        compute.assert_called_once()
 
-    def test_resolve_mp_start_method(self) -> None:
-        from scfm_controlled_manipulations.evaluation.pool import (
-            resolve_evaluation_mp_start_method,
-        )
+    def test_evaluation_pool_is_spawn(self) -> None:
+        import multiprocessing as mp
 
-        self.assertEqual(
-            resolve_evaluation_mp_start_method(workers=48, configured="fork"),
-            "fork",
-        )
-        self.assertEqual(
-            resolve_evaluation_mp_start_method(workers=48, configured="spawn"),
-            "spawn",
-        )
+        self.assertEqual(mp.get_context("spawn").get_start_method(), "spawn")
 
 
 class ScibCellBatchTest(unittest.TestCase):
@@ -270,7 +254,6 @@ class KnnPermutationNullTest(unittest.TestCase):
     ) -> float:
         from scfm_controlled_manipulations.evaluation.metrics_knn import (
             _knn_null_seed,
-            knn_neighbors,
             knn_overlap_per_cell,
         )
 
@@ -283,7 +266,6 @@ class KnnPermutationNullTest(unittest.TestCase):
 
     def test_empirical_null_breaks_pairing(self) -> None:
         from scfm_controlled_manipulations.evaluation.metrics_knn import (
-            knn_neighbors,
             knn_overlap_per_cell,
         )
 
@@ -483,11 +465,10 @@ class StatsShiftMetricsTest(unittest.TestCase):
             ModelEvaluateContext,
         )
         from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
-            compute_embedding_stats,
             compute_embedding_shift,
+            compute_embedding_stats,
         )
         from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
-            ReferenceStatsShiftCache,
             precompute_reference_stats_shift,
         )
 

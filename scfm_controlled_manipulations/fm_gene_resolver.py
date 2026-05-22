@@ -229,18 +229,13 @@ def prepare_gene_metadata_for_pipeline(
     raw_var_names = adata.var_names.astype(str).map(_strip_dedup_suffix).to_numpy()
     sample = raw_var_names[: min(200, len(raw_var_names))]
     var_names_are_ensembl = (
-        sample.size > 0
-        and float(np.mean([_looks_like_ensembl_id(n) for n in sample])) > 0.5
+        sample.size > 0 and float(np.mean([_looks_like_ensembl_id(n) for n in sample])) > 0.5
     )
 
     if ensembl_col is not None:
-        input_ensembl = (
-            adata.var[ensembl_col].map(_normalize_ensembl_id).astype(str).to_numpy()
-        )
+        input_ensembl = adata.var[ensembl_col].map(_normalize_ensembl_id).astype(str).to_numpy()
     elif var_names_are_ensembl:
-        input_ensembl = np.array(
-            [_normalize_ensembl_id(n) for n in raw_var_names], dtype=object
-        )
+        input_ensembl = np.array([_normalize_ensembl_id(n) for n in raw_var_names], dtype=object)
     else:
         input_ensembl = np.array([""] * adata.n_vars, dtype=object)
 
@@ -265,11 +260,13 @@ def prepare_gene_metadata_for_pipeline(
         if use_mygene_fallback:
             still_missing_mask = (pd.Series(input_ensembl) == "").to_numpy()
             if still_missing_mask.any():
-                missing_syms = sorted({
-                    _strip_dedup_suffix(s)
-                    for s, m in zip(input_symbols, still_missing_mask, strict=True)
-                    if m and str(s).strip()
-                })
+                missing_syms = sorted(
+                    {
+                        _strip_dedup_suffix(s)
+                        for s, m in zip(input_symbols, still_missing_mask, strict=True)
+                        if m and str(s).strip()
+                    }
+                )
                 logger.info(
                     "Falling back to mygene for %d unresolved symbols.",
                     len(missing_syms),

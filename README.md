@@ -46,11 +46,9 @@ the top-level `evaluation:` key (see `configs/default.yaml`). Diffusion transiti
 
 Set `evaluation.evaluation_workers` to parallelize across interventions (e.g. `80` on a large node).
 Each worker is a **process** pinned to **one** BLAS/sklearn thread; limits are applied in
-`scripts/lib/eval_runtime_env.sh` and in Python before numpy loads. On Linux, workers default to `fork` and share read-only reference matrices via copy-on-write.
-Each fork worker runs neighbors+Leiden in a nested `spawn` subprocess so OpenMP from kNN does
-not trigger unsafe `fork()` in scanpy/igraph. Set `evaluation_mp_start_method: spawn` if issues
-persist. Diffusion pickles
-live under `evaluation_cache/` with file locking.
+`scripts/lib/eval_runtime_env.sh` and in Python before numpy loads. Evaluation workers always use
+the `spawn` start method for OpenMP safety, and Leiden runs in-process within each worker.
+Diffusion pickles live under `evaluation_cache/` with file locking.
 
 **One atlas in the background:**
 

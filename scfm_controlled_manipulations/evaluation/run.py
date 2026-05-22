@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import multiprocessing as mp
+
 from scfm_controlled_manipulations.compute_env import apply_thread_limits
 
 apply_thread_limits(threads_per_process=1)
@@ -18,17 +20,12 @@ import pandas as pd
 from scfm_controlled_manipulations.evaluation.context import load_dataset_context
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import log_cell_batch_obs_columns
 from scfm_controlled_manipulations.evaluation.metrics_common import VALUE_SUMMARY_COLUMNS
-from scfm_controlled_manipulations.evaluation.pool import (
-    evaluation_mp_context,
-    use_fork_shared_memory,
-)
 from scfm_controlled_manipulations.evaluation.worker import (
     InterventionTask,
     SharedEvalPayload,
     build_shared_context,
     install_shared_context,
     run_intervention_task,
-    worker_initializer,
     worker_initializer_spawn,
 )
 from scfm_controlled_manipulations.io import (
@@ -55,7 +52,6 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "batch_col": "batch",
     "dataset_id": None,
     "evaluation_workers": 1,
-    "evaluation_mp_start_method": "fork",
     "stats_shift_pairwise_cell_subsample_n": 500,
     "stats_shift_pairwise_max_pairs": 10_000,
     "knn_alpha": 10.0,
@@ -94,10 +90,6 @@ def validate_evaluation_config(ev: dict[str, Any]) -> dict[str, Any]:
     validated["distance_metrics"] = distance_metrics
 
     validated["evaluation_workers"] = max(1, int(validated["evaluation_workers"]))
-    mp_method = str(validated["evaluation_mp_start_method"]).strip().lower()
-    if mp_method not in {"fork", "spawn", "auto"}:
-        raise ValueError("evaluation.evaluation_mp_start_method must be fork, spawn, or auto")
-    validated["evaluation_mp_start_method"] = mp_method
 
     validated["stats_shift_pairwise_cell_subsample_n"] = int(
         validated["stats_shift_pairwise_cell_subsample_n"]
@@ -269,7 +261,6 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     dataset_id = _dataset_id(cfg, ev)
     cache_path = evaluation_cache_dir(results_dir)
     evaluation_workers = max(1, int(ev.get("evaluation_workers", 1)))
-    mp_start_method = str(ev.get("evaluation_mp_start_method", "fork"))
 
     evaluation_dir(results_dir).mkdir(parents=True, exist_ok=True)
 
@@ -311,10 +302,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         results_dir,
         embeddings_root,
     )
-    mp_method = evaluation_mp_context(
-        workers=evaluation_workers,
-        configured=mp_start_method,
-    ).get_start_method()
+    mp_method = mp.get_context("spawn").get_start_method()
     logger.info(
         "Plan: models=%d interventions_with_embeddings=%d "
         "(k=%s metrics=%s diffusion_t=%s leiden_res=%s cache=%s workers=%d mp=%s)",
@@ -330,7 +318,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     )
     logger.info(
         "Each worker uses 1 BLAS/sklearn thread; set evaluation.evaluation_workers up to your CPU budget. "
-        "Fork workers run Leiden in a nested spawn subprocess to avoid OpenMP+fork aborts."
+        "Process pool start method is spawn and Leiden runs in-process."
     )
 
     logger.info("Loading shared reference raw matrix and obs (once per dataset)")
@@ -431,55 +419,39 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                         knn_cache_size=len(knn_cache),
                     )
         else:
-            fork_shared = use_fork_shared_memory(
-                workers=pool_workers,
-                configured=mp_start_method,
-            )
             logger.info(
-                "Running %d interventions with %d process workers (mp=%s fork shared memory=%s)",
+                "Running %d interventions with %d process workers (mp=%s)",
                 n_planned,
                 pool_workers,
                 mp_method,
-                fork_shared,
             )
-            mp_ctx = evaluation_mp_context(
-                workers=pool_workers,
-                configured=mp_start_method,
+            mp_ctx = mp.get_context("spawn")
+            payload = SharedEvalPayload(
+                results_dir=str(results_dir),
+                embeddings_root=str(embeddings_root),
+                model=model,
+                ref_id=ref_id,
+                dataset_id=dataset_id,
+                seed=seed,
+                k_values=k_values,
+                distance_metrics=distance_metrics,
+                diffusion_t_values=diffusion_t_values,
+                leiden_resolutions=leiden_resolutions,
+                cache_path=str(cache_path),
+                cell_type_col=cell_type_col,
+                batch_col=batch_col,
+                stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
+                stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
+                knn_alpha=knn_alpha,
+                knn_bandwidth_k=knn_bandwidth_k,
+                knn_n_null_permutations=knn_n_null_permutations,
             )
-            if fork_shared:
-                install_shared_context(shared)
-                executor_kwargs: dict[str, Any] = {
-                    "max_workers": pool_workers,
-                    "mp_context": mp_ctx,
-                    "initializer": worker_initializer,
-                }
-            else:
-                payload = SharedEvalPayload(
-                    results_dir=str(results_dir),
-                    embeddings_root=str(embeddings_root),
-                    model=model,
-                    ref_id=ref_id,
-                    dataset_id=dataset_id,
-                    seed=seed,
-                    k_values=k_values,
-                    distance_metrics=distance_metrics,
-                    diffusion_t_values=diffusion_t_values,
-                    leiden_resolutions=leiden_resolutions,
-                    cache_path=str(cache_path),
-                    cell_type_col=cell_type_col,
-                    batch_col=batch_col,
-                    stats_shift_pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
-                    stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
-                    knn_alpha=knn_alpha,
-                    knn_bandwidth_k=knn_bandwidth_k,
-                    knn_n_null_permutations=knn_n_null_permutations,
-                )
-                executor_kwargs = {
-                    "max_workers": pool_workers,
-                    "mp_context": mp_ctx,
-                    "initializer": worker_initializer_spawn,
-                    "initargs": (payload,),
-                }
+            executor_kwargs = {
+                "max_workers": pool_workers,
+                "mp_context": mp_ctx,
+                "initializer": worker_initializer_spawn,
+                "initargs": (payload,),
+            }
 
             with ProcessPoolExecutor(**executor_kwargs) as pool:
                 futures = {pool.submit(run_intervention_task, task): task for task in tasks}

@@ -1,4 +1,4 @@
-"""Process-pool workers for intervention-level evaluation (fork-shared or spawn-reload)."""
+"""Process-pool workers for intervention-level evaluation (spawn)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from scfm_controlled_manipulations.evaluation.context import (
     load_model_context,
 )
 from scfm_controlled_manipulations.evaluation.intervention_job import evaluate_intervention
-from scfm_controlled_manipulations.evaluation.leiden_cache import init_leiden_isolate_pool
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
     compute_cell_batch_reference_rows,
 )
@@ -84,7 +83,7 @@ def _warm_reference_leiden_cache(
 
 @dataclass(frozen=True)
 class SharedEvalPayload:
-    """Pickle-friendly paths for spawn-based workers (macOS / Windows)."""
+    """Pickle-friendly paths for spawn-based workers."""
 
     results_dir: str
     embeddings_root: str
@@ -155,7 +154,6 @@ def build_shared_context(
         pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
         pairwise_max_pairs=stats_shift_pairwise_max_pairs,
     )
-
     static_row_templates: list[list[dict[str, Any]]] = []
     if cell_type_col or batch_col:
         static_row_templates.append(
@@ -196,12 +194,6 @@ def build_shared_context(
         knn_n_null_permutations=knn_n_null_permutations,
         static_row_templates=static_row_templates,
     )
-
-
-def worker_initializer() -> None:
-    """Fork worker: inherit parent ``_SHARED``; pin threads; spawn pool for Leiden."""
-    apply_thread_limits(threads_per_process=1)
-    init_leiden_isolate_pool()
 
 
 def worker_initializer_spawn(payload: SharedEvalPayload) -> None:

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 EMBED_KEY = "X_eval"
 METRIC_CATEGORY = "cell_type_and_batch_metrics"
+_DISABLE_BATCH_ILISI = False
 
 
 def _obs_col_present(obs_df: pd.DataFrame, col: str | None) -> bool:
@@ -104,9 +105,24 @@ def _append_metric_row(
 
 
 def _safe_scib_metric(fn: Any, metric_name: str, space_label: str) -> float:
+    global _DISABLE_BATCH_ILISI
+    if metric_name == "batch_ilisi" and _DISABLE_BATCH_ILISI:
+        return float("nan")
+
     try:
         return float(fn())
     except Exception as exc:
+        msg = str(exc)
+        if metric_name == "batch_ilisi" and (
+            "GLIBC_" in msg or "GLIBCXX_" in msg or "knn_graph.o" in msg
+        ):
+            if not _DISABLE_BATCH_ILISI:
+                logger.warning(
+                    "cell_type_and_batch_metrics: disabling batch_ilisi in this process "
+                    "due to scIB binary incompatibility: %s",
+                    msg,
+                )
+            _DISABLE_BATCH_ILISI = True
         logger.warning(
             "cell_type_and_batch_metrics: %s failed for space=%s: %s",
             metric_name,
