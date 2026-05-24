@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -10,6 +12,8 @@ import streamlit as st
 
 from metrics_dashboard.bundle import METRICS_FILENAME, bundle_metrics_path, bundle_summary_path
 from metrics_dashboard.config import MODEL_ORDER, bundle_root
+
+log = logging.getLogger("scfm_dashboard.load")
 
 
 def _cache_key(dataset_ids: tuple[str, ...], models: tuple[str, ...], root: Path) -> str:
@@ -25,11 +29,22 @@ def load_metrics(dataset_id: str, models: list[str], root: Path | None = None) -
     base = root or bundle_root()
     path = bundle_metrics_path(base, dataset_id)
     if not path.is_file():
+        log.warning("missing metrics parquet: %s", path)
         return pd.DataFrame()
-    df = pd.read_parquet(path)
+    t0 = time.perf_counter()
+    log.info("reading parquet %s (%.2f MB)", path, path.stat().st_size / 1e6)
+    try:
+        df = pd.read_parquet(path)
+    except Exception as exc:
+        log.exception("failed to read parquet %s", path)
+        raise RuntimeError(
+            f"Could not read {path.name} ({exc}). "
+            "Re-export with `make export-dashboard-bundle ... --compression snappy` if ZSTD is unsupported."
+        ) from exc
     if models:
         df = df[df["model"].astype(str).isin(models)]
     df["model"] = pd.Categorical(df["model"].astype(str), categories=MODEL_ORDER, ordered=True)
+    log.info("loaded %s: %d rows in %.2fs", dataset_id, len(df), time.perf_counter() - t0)
     return df
 
 
@@ -55,12 +70,16 @@ def load_metrics_cached(
     root_str: str,
     cache_version: str,
 ) -> pd.DataFrame:
+    log.info("cache load datasets=%s models=%s root=%s", dataset_ids, models, root_str)
     root = Path(root_str)
     frames = [load_metrics(ds, list(models), root) for ds in dataset_ids]
     frames = [f for f in frames if not f.empty]
     if not frames:
+        log.warning("no metrics frames loaded")
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    out = pd.concat(frames, ignore_index=True)
+    log.info("concatenated %d rows", len(out))
+    return out
 
 
 def load_multi_dataset_metrics(

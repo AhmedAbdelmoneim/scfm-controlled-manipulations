@@ -1,3 +1,7 @@
-# Streamlit Community Cloud reads this file from the app directory (metrics_dashboard/).
-# Installs the local dashboard package and its dependencies.
--e .
+# Streamlit Community Cloud — explicit deps (bootstrap.py handles import path).
+streamlit>=1.30
+pandas>=2.0
+pyarrow>=14
+matplotlib>=3.8
+numpy>=1.26
+scipy>=1.11

@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from metrics_dashboard.bundle import METRICS_FILENAME, SUMMARY_FILENAME, is_bundle_dataset_dir
+from metrics_dashboard.bundle import (
+    MANIFEST_FILENAME,
+    METRICS_FILENAME,
+    SUMMARY_FILENAME,
+    is_bundle_dataset_dir,
+)
 from metrics_dashboard.config import MODEL_ORDER, bundle_root
 
 
@@ -35,11 +40,17 @@ def discover_datasets(root: Path | None = None) -> list[str]:
 
 def discover_models(dataset_id: str, root: Path | None = None) -> list[str]:
     base = root or bundle_root()
-    metrics_path = base / dataset_id / METRICS_FILENAME
-    if not metrics_path.is_file():
-        return []
-    models = pd.read_parquet(metrics_path, columns=["model"])["model"]
-    uniq = sorted(models.astype(str).unique())
+    manifest_path = base / dataset_id / MANIFEST_FILENAME
+    if manifest_path.is_file():
+        data = json.loads(manifest_path.read_text())
+        uniq = [str(m) for m in data.get("models", [])]
+    else:
+        metrics_path = base / dataset_id / METRICS_FILENAME
+        if not metrics_path.is_file():
+            return []
+        uniq = sorted(
+            pd.read_parquet(metrics_path, columns=["model"])["model"].astype(str).unique()
+        )
     order = {m: i for i, m in enumerate(MODEL_ORDER)}
     return sorted(uniq, key=lambda m: order.get(m, len(MODEL_ORDER)))
 

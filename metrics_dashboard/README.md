@@ -11,7 +11,7 @@ make dashboard
 ### Streamlit Community Cloud
 
 - **Main file:** `metrics_dashboard/Home.py`
-- **App directory:** `metrics_dashboard/` (contains `requirements.txt` with `-e .`)
+- **App directory:** `metrics_dashboard/` (contains `requirements.txt`)
 - Ensure `data/dashboard_bundles/` is committed in the repo root.
 
 Light/dark mode: Streamlit menu (⋮) → **Settings** → **Theme**.

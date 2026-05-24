@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import bootstrap  # noqa: F401
 
+import logging
+
 import streamlit as st
+
+from metrics_dashboard.runtime import log_startup_context
+
+log = logging.getLogger("scfm_dashboard.summary_page")
+log_startup_context()
 
 from metrics_dashboard.catalog import catalog_table, discover_datasets
 from metrics_dashboard.config import bundle_root

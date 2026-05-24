@@ -7,11 +7,32 @@ from pathlib import Path
 
 def _find_repo_root() -> Path:
     """Locate repo root by ``data/dashboard_bundles`` (works locally and on Streamlit Cloud)."""
+    import logging
+    import os
+
+    log = logging.getLogger("scfm_dashboard.config")
     here = Path(__file__).resolve()
+    candidates: list[Path] = []
     for parent in here.parents:
-        if (parent / "data" / "dashboard_bundles").is_dir():
+        candidates.append(parent)
+    cwd = Path.cwd()
+    for parent in [cwd, *cwd.parents]:
+        if parent not in candidates:
+            candidates.append(parent)
+    for parent in candidates:
+        bundle_dir = parent / "data" / "dashboard_bundles"
+        if bundle_dir.is_dir():
+            log.info("repo_root=%s (found %s)", parent, bundle_dir)
+            print(f"[scfm_dashboard] repo_root={parent}", flush=True)
             return parent
-    return here.parents[2]
+    fallback = here.parents[2]
+    log.warning(
+        "dashboard_bundles not found (cwd=%s); fallback repo_root=%s",
+        os.getcwd(),
+        fallback,
+    )
+    print(f"[scfm_dashboard] WARNING: no dashboard_bundles; fallback={fallback}", flush=True)
+    return fallback
 
 
 BUNDLE_ROOT = _find_repo_root() / "data" / "dashboard_bundles"
