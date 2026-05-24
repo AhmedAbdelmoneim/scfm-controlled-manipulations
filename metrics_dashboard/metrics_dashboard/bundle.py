@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import anndata as ad
 import numpy as np
 import pandas as pd
 
@@ -90,6 +89,8 @@ def extract_intervention_params(
         if not h5ad_path.is_file():
             continue
         name = id_to_name.get(iid, iid.split("_")[0])
+        import anndata as ad
+
         adata = ad.read_h5ad(h5ad_path, backed="r")
         try:
             params = adata.uns.get("scfm_intervention", {}).get(name, {})
@@ -145,6 +146,8 @@ def extract_dataset_summary(
             "n_batches": 0,
             "error": "reference.h5ad not found",
         }
+
+    import anndata as ad
 
     adata = ad.read_h5ad(ref_path, backed="r")
     try:

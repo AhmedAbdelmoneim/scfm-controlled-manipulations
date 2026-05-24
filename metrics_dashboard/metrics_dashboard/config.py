@@ -5,9 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-# Repo root: metrics_dashboard/metrics_dashboard/config.py -> parents[2]
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-BUNDLE_ROOT = _REPO_ROOT / "data" / "dashboard_bundles"
+def _find_repo_root() -> Path:
+    """Locate repo root by ``data/dashboard_bundles`` (works locally and on Streamlit Cloud)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "data" / "dashboard_bundles").is_dir():
+            return parent
+    return here.parents[2]
+
+
+BUNDLE_ROOT = _find_repo_root() / "data" / "dashboard_bundles"
 
 MODEL_ORDER = [
     "pca",

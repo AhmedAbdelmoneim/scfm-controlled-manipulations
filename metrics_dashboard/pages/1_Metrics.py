@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import bootstrap  # noqa: F401
+
 import streamlit as st
 
 from metrics_dashboard.catalog import discover_datasets

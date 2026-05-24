@@ -8,6 +8,12 @@ Streamlit app for structure-evaluation metrics. Data comes from checked-in Parqu
 make dashboard
 ```
 
+### Streamlit Community Cloud
+
+- **Main file:** `metrics_dashboard/Home.py`
+- **App directory:** `metrics_dashboard/` (contains `requirements.txt` with `-e .`)
+- Ensure `data/dashboard_bundles/` is committed in the repo root.
+
 Light/dark mode: Streamlit menu (⋮) → **Settings** → **Theme**.
 
 ## Export bundles (from vault)
