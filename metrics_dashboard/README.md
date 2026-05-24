@@ -14,7 +14,7 @@ make dashboard
 - **App directory:** `metrics_dashboard/` (contains `requirements.txt`)
 - Ensure `data/dashboard_bundles/` is committed in the repo root.
 
-Light/dark mode: Streamlit menu (⋮) → **Settings** → **Theme**.
+Use the sidebar **Appearance** control for light/dark plots (defaults to dark).
 
 ## Export bundles (from vault)
 

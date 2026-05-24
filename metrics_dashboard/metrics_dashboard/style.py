@@ -1,13 +1,27 @@
-"""Matplotlib theme helpers aligned with Streamlit light/dark mode."""
+"""Matplotlib theme helpers and in-app light/dark toggle."""
 
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import streamlit as st
 
+APPEARANCE_KEY = "appearance"
+
+
+def render_theme_sidebar() -> None:
+    """Sidebar theme control (Streamlit Cloud hides the ⋮ → Settings theme picker)."""
+    st.sidebar.selectbox(
+        "Appearance",
+        ["Light", "Dark"],
+        index=1,
+        key=APPEARANCE_KEY,
+    )
+
 
 def streamlit_is_dark() -> bool:
-    """User-selected theme (Settings → Theme), not only config.toml defaults."""
+    appearance = st.session_state.get(APPEARANCE_KEY)
+    if appearance is not None:
+        return str(appearance).lower() == "dark"
     try:
         theme = st.context.theme
         if theme is not None and theme.base:
@@ -17,7 +31,7 @@ def streamlit_is_dark() -> bool:
     try:
         return str(st.get_option("theme.base")).lower() == "dark"
     except Exception:
-        return False
+        return True
 
 
 def plot_colors() -> dict[str, str]:

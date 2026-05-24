@@ -5,7 +5,10 @@ port = 8501
 [browser]
 gatherUsageStats = false
 
-# Omit theme.base so users can pick Light / Dark / System in Settings → Theme.
 [theme]
+base = "dark"
 primaryColor = "#2563eb"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#fafafa"
 font = "sans serif"

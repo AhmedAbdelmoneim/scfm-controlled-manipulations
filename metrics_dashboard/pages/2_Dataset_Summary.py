@@ -16,6 +16,9 @@ log_startup_context()
 from metrics_dashboard.catalog import catalog_table, discover_datasets
 from metrics_dashboard.config import bundle_root
 from metrics_dashboard.load import load_dataset_summary
+from metrics_dashboard.style import render_theme_sidebar
+
+render_theme_sidebar()
 
 root = bundle_root()
 datasets = discover_datasets(root)

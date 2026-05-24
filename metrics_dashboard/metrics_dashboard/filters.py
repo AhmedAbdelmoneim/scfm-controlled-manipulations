@@ -8,6 +8,7 @@ import streamlit as st
 
 from metrics_dashboard.catalog import discover_models
 from metrics_dashboard.config import DASHBOARD_METRIC_KEYS, DASHBOARD_METRICS, MODEL_ORDER, bundle_root
+from metrics_dashboard.style import render_theme_sidebar
 
 
 @dataclass
@@ -18,6 +19,8 @@ class DashboardControls:
 
 
 def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
+    render_theme_sidebar()
+
     if not datasets:
         st.sidebar.error("No bundles in data/dashboard_bundles. Run make export-dashboard-bundle.")
         return None

@@ -11,7 +11,8 @@ import streamlit as st
 
 from metrics_dashboard.catalog import catalog_table, discover_datasets
 from metrics_dashboard.config import bundle_root
-from metrics_dashboard.runtime import bundle_diagnostics, log_startup_context
+from metrics_dashboard.runtime import log_startup_context
+from metrics_dashboard.style import render_theme_sidebar
 
 log = logging.getLogger("scfm_dashboard.home")
 log_startup_context()
@@ -23,18 +24,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+render_theme_sidebar()
+
 root = bundle_root()
 datasets = discover_datasets(root)
 log.info("Home: root=%s datasets=%s", root, datasets)
 
 st.title("ScFMs Metrics Dashboard")
-st.caption(f"Bundle root: `{root}` · {len(datasets)} dataset(s)")
 st.markdown(
     """
 Structure-evaluation metrics for single-cell foundation models under controlled manipulations.
 Open **Metrics** in the sidebar for plots, or **Dataset summary** for atlas sizes.
-
-Use the menu (⋮) → **Settings** → **Theme** for light or dark mode.
 """
 )
 
@@ -55,6 +55,3 @@ else:
         for s in catalog_table(root)
     ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-with st.expander("Diagnostics (for deployment debugging)", expanded=not datasets):
-    st.json(bundle_diagnostics())
