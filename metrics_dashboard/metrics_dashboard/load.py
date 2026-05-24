@@ -9,7 +9,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from metrics_dashboard.config import MODEL_ORDER, PARAM_KEYS, evaluation_dir, manipulations_dir
+from metrics_dashboard.config import (
+    MODEL_ORDER,
+    PARAM_KEYS,
+    evaluation_dir,
+    manipulations_dir,
+    reference_h5ad_path,
+)
 
 
 def _eval_cache_key(dataset_id: str, models: tuple[str, ...], root: Path) -> str:
@@ -137,6 +143,77 @@ def _cross_dataset_cache_key(model: str, dataset_ids: tuple[str, ...], root: Pat
         if path.is_file():
             parts.append(f"{path}:{path.stat().st_mtime_ns}")
     return "|".join(parts)
+
+
+def load_dataset_summary(
+    dataset_id: str,
+    root: Path,
+    *,
+    cell_type_col: str = "cell_type",
+    batch_col: str = "batch",
+) -> dict[str, int | str | float]:
+    """Summary stats from reference.h5ad."""
+    path = reference_h5ad_path(dataset_id, root)
+    if not path.is_file():
+        return {
+            "dataset_id": dataset_id,
+            "n_cells": 0,
+            "n_genes": 0,
+            "n_cell_types": 0,
+            "n_batches": 0,
+            "error": "reference.h5ad not found",
+        }
+    adata = ad.read_h5ad(path, backed="r")
+    n_cells = int(adata.n_obs)
+    n_genes = int(adata.n_vars)
+    n_ct = (
+        int(adata.obs[cell_type_col].nunique())
+        if cell_type_col in adata.obs.columns
+        else 0
+    )
+    n_batches = (
+        int(adata.obs[batch_col].nunique()) if batch_col in adata.obs.columns else 0
+    )
+    adata.file.close()
+    return {
+        "dataset_id": dataset_id,
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "n_cell_types": n_ct,
+        "n_batches": n_batches,
+    }
+
+
+@st.cache_data(show_spinner="Loading dataset summary…")
+def load_dataset_summary_cached(
+    dataset_id: str,
+    root_str: str,
+    ref_mtime_ns: int,
+) -> dict[str, int | str | float]:
+    return load_dataset_summary(dataset_id, Path(root_str))
+
+
+def load_multi_dataset_metrics(
+    dataset_ids: list[str],
+    models: list[str],
+    root: Path,
+) -> pd.DataFrame:
+    frames = [load_dataset_metrics(ds, models, root) for ds in dataset_ids]
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+@st.cache_data(show_spinner="Loading metrics…")
+def load_multi_dataset_metrics_cached(
+    dataset_ids: tuple[str, ...],
+    models: tuple[str, ...],
+    root_str: str,
+    cache_version: str,
+) -> pd.DataFrame:
+    root = Path(root_str)
+    return load_multi_dataset_metrics(list(dataset_ids), list(models), root)
 
 
 @st.cache_data(show_spinner="Loading cross-dataset metrics…")

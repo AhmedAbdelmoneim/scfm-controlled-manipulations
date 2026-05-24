@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "pandas",
+    "scipy",
     "seaborn",
     "streamlit>=1.30",
 ]

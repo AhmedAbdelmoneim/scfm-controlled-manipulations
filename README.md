@@ -75,9 +75,9 @@ Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
 **Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
 append embedding-minus-raw differences for all summary columns except `value_std` (left `NaN`).
 
-**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, `diffusion_js`, and
-`classifier_roc_auc_ovr_macro_cv_mean` include broken-pairing nulls in `null_value` (mean over
-cells; optional multi-shuffle average via `knn_n_null_permutations`). Diffusion uses a PHATE-style
+**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, and `diffusion_js` include broken-pairing
+nulls in `null_value` (mean over cells; optional multi-shuffle average via `knn_n_null_permutations`).
+Diffusion uses a PHATE-style
 alpha-decay kNN kernel (`knn_alpha`, default 10); set `knn_alpha: 2` for a Gaussian-like kernel.
 Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 

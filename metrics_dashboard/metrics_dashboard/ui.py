@@ -8,16 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from metrics_dashboard.catalog import catalog_table, discover_datasets
-from metrics_dashboard.filters import render_artifacts_root_sidebar
+from metrics_dashboard.dashboard_filters import render_artifacts_root_sidebar
 from metrics_dashboard.load import _eval_cache_key, load_dataset_metrics_cached
-
-
-def get_root() -> Path:
-    if "artifacts_root" not in st.session_state:
-        from metrics_dashboard.config import artifacts_root
-
-        st.session_state.artifacts_root = str(artifacts_root())
-    return Path(st.session_state.artifacts_root)
 
 
 def init_session_root() -> Path:

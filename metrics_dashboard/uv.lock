@@ -441,6 +441,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "streamlit" },
 ]
@@ -451,6 +452,7 @@ requires-dist = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "streamlit", specifier = ">=1.30" },
 ]

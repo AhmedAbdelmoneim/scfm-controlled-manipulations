@@ -1,28 +1,34 @@
-"""SCEval metrics dashboard — home."""
+"""ScFMs Metrics Dashboard — home."""
 
 from __future__ import annotations
 
 import streamlit as st
 
 from metrics_dashboard.catalog import discover_datasets
-from metrics_dashboard.state import get_param, get_param_list, set_param_list, set_params
+from metrics_dashboard.state import get_param_list, set_param_list, set_params
 from metrics_dashboard.ui import init_session_root, render_catalog_summary
 
 st.set_page_config(
-    page_title="SCEval Metrics",
+    page_title="ScFMs Metrics Dashboard",
     page_icon=":bar_chart:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("SCEval metrics dashboard")
+st.title("ScFMs Metrics Dashboard")
 st.markdown(
     """
-Explore structure-evaluation metrics across **datasets** and **models**.
-Artifacts are read from `{ARTIFACTS_ROOT}/{dataset}/results/evaluation/{model}_metrics.csv`.
+Explore structure-evaluation metrics for single-cell foundation models under
+controlled manipulations. Artifacts are read from
+`{ARTIFACTS_ROOT}/{dataset}/results/evaluation/{model}_metrics.csv`.
 
-Use the sidebar to set the artifacts root, then open **Explore**, **Compare**, or **Model Card** from the pages menu.
-Duplicate a browser tab and change URL query params (`?dataset=...&models=pca,scgpt`) for side-by-side comparison in separate tabs.
+**Pages**
+- **Metrics** — manipulation sweeps, integration correlations, embedding collapse/shift.
+- **Dataset summary** — cells, genes, cell types, batches per atlas.
+- **Compare** / **Model card** — legacy views (use Metrics for the primary workflow).
+
+Use the sidebar to set the artifacts root. Select datasets and models on the Metrics page.
+Toggle light/dark appearance via Streamlit settings (⋮ menu → Settings → Theme).
 """
 )
 
@@ -35,33 +41,17 @@ if st.sidebar.button("Refresh catalog"):
 
 datasets = discover_datasets(root)
 if datasets:
-    default_ds = get_param("dataset") or datasets[0]
-    idx = datasets.index(default_ds) if default_ds in datasets else 0
-    ds = st.sidebar.selectbox("Quick dataset", datasets, index=idx)
-    qp_models = get_param_list("models")
+    default_ds = get_param_list("datasets") or datasets[:1]
+    ds_pick = st.sidebar.multiselect("Quick datasets", datasets, default=[d for d in default_ds if d in datasets] or datasets[:1])
     from metrics_dashboard.catalog import discover_models
 
-    ev_models = discover_models(root / ds / "results" / "evaluation")
-    models = st.sidebar.multiselect(
-        "Quick models",
-        ev_models,
-        default=qp_models or ev_models,
-    )
-    if st.sidebar.button("Apply to URL"):
-        set_params(dataset=ds)
-        set_param_list("models", models)
-        st.rerun()
+    if ds_pick:
+        ev_models = discover_models(root / ds_pick[0] / "results" / "evaluation")
+        models = st.sidebar.multiselect("Quick models", ev_models, default=ev_models)
+        if st.sidebar.button("Apply to URL"):
+            set_params(datasets=",".join(ds_pick))
+            set_param_list("models", models)
+            st.rerun()
 
 st.subheader("Dataset catalog")
 render_catalog_summary(root)
-
-st.markdown(
-    """
-### Pages
-- **Explore** — filter metrics and plot by category (all models on one chart).
-- **Compare** — two views (A | B) in one window for different datasets/models.
-- **Model Card** — aggregate metrics across datasets for selected model(s).
-
-See [README.md](README.md) for deployment and query-parameter reference.
-"""
-)

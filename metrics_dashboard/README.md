@@ -1,32 +1,31 @@
-# SCEval metrics dashboard
+# ScFMs Metrics Dashboard
 
 Streamlit app for exploring structure-evaluation metrics produced by `make evaluate`.
 
 ## Artifacts layout
 
-The app reads (read-only) from:
-
 ```text
 {SCFM_ARTIFACTS_ROOT}/{dataset_id}/results/
   evaluation/{model}_metrics.csv
-  manipulations/{intervention_id}.h5ad   # intervention sweep parameters
+  manipulations/{intervention_id}.h5ad
+  manipulations/reference.h5ad
 ```
 
 Default root: `/vault/amoneim/scfm-controlled-manipulations/processed/sceval`
 
-## Run locally
+Sweep plots use `value_mean` for lines and `value_mean ± value_std` for shaded bands
+(spread across cells, not a confidence interval for the mean).
 
-From the repo root:
+## Run locally
 
 ```bash
 make dashboard
 ```
 
-Or from this directory:
+Or:
 
 ```bash
-cd metrics_dashboard
-uv sync
+cd metrics_dashboard && uv sync
 SCFM_ARTIFACTS_ROOT=/vault/amoneim/scfm-controlled-manipulations/processed/sceval \
   uv run streamlit run Home.py --server.port 8501
 ```
@@ -35,47 +34,29 @@ SCFM_ARTIFACTS_ROOT=/vault/amoneim/scfm-controlled-manipulations/processed/sceva
 
 | Page | Purpose |
 |------|---------|
-| **Home** | Catalog of datasets and evaluation readiness |
-| **Explore** | Filter and plot metrics for one dataset (all selected models on one chart) |
-| **Compare** | Two views (A \| B) in one window — different datasets/models/configs |
-| **Model Card** | Cross-dataset heatmaps and scorecard per model |
+| **Home** | Catalog and quick dataset/model URL presets |
+| **Explore** (Metrics) | Three plot sets: manipulation sweeps, integration correlations, collapse/shift |
+| **Dataset summary** | Cells, genes, cell types, batches from `reference.h5ad` |
+| **Compare** / **Model card** | Legacy stubs — use Explore for primary workflow |
+
+## Configuration
+
+- **Models & colors:** `metrics_dashboard/config.py` (`MODEL_ORDER`, `MODEL_COLORS`)
+- **Dashboard metrics:** `DASHBOARD_METRICS` (KL, JS, kNN recall, Leiden ARI)
 
 ## URL query parameters
 
-Share or duplicate a browser tab with the same view:
+| Param | Example |
+|-------|---------|
+| `datasets` | `dendritic_cells,human_pbmc` |
+| `models` | `pca,scgpt,geneformer` |
 
-| Param | Example | Used on |
-|-------|---------|---------|
-| `dataset` | `dendritic_cells` | Explore, Home |
-| `models` | `pca,scgpt,geneformer` | Explore |
-| `a_dataset` | `dendritic_cells` | Compare view A |
-| `a_models` | `pca,scgpt` | Compare view A |
-| `b_dataset` | `human_pbmc` | Compare view B |
-| `b_models` | `geneformer` | Compare view B |
+## Theme
 
-Example:
+Toggle light/dark via Streamlit **Settings → Theme**. Plot styling adapts automatically.
 
-```text
-http://localhost:8501/Explore?dataset=dendritic_cells&models=pca,scgpt,geneformer
-```
-
-Open two tabs with different `dataset` / `models` for side-by-side comparison without the Compare page.
-
-## Deploy with Streamlit
-
-1. Set **main file** to `metrics_dashboard/Home.py` (or run from that directory).
-2. Python 3.11; install with `uv sync` or `pip install -e .` from `metrics_dashboard/`.
-3. Set secret / environment variable `SCFM_ARTIFACTS_ROOT` to a path visible on the host (vault mount or rsynced `*/results/evaluation/` trees).
-
-If the host cannot mount the vault, sync artifacts:
+## Tests
 
 ```bash
-rsync -av /vault/.../processed/sceval/*/results/evaluation/ /data/sceval/
-rsync -av /vault/.../processed/sceval/*/results/manipulations/ /data/sceval-manip/
+python -m unittest tests.test_dashboard_transforms
 ```
-
-(Param joins need manipulation h5ads for sweep x-axes.)
-
-## Relation to the marimo notebook
-
-[`notebooks/3-analyze-metrics.py`](../notebooks/3-analyze-metrics.py) remains useful for ad-hoc analysis. This dashboard adds dataset/model pickers, compare panes, and model-card aggregation as evaluations complete on more atlases.

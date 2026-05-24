@@ -77,7 +77,7 @@ benchmark-eval:
 ## Run unit tests
 .PHONY: test
 test:
-	uv run python -m unittest discover -s tests -v
+	PYTHONPATH=metrics_dashboard uv run python -m unittest discover -s tests -v
 
 ## Fast synthetic smoke-run for evaluate pipeline
 .PHONY: smoke-eval
