@@ -1,0 +1,54 @@
+"""Dataset summary — cells, genes, cell types, batches."""
+
+from __future__ import annotations
+
+import streamlit as st
+
+from metrics_dashboard.catalog import catalog_table, discover_datasets
+from metrics_dashboard.config import bundle_root
+from metrics_dashboard.load import load_dataset_summary
+
+root = bundle_root()
+datasets = discover_datasets(root)
+
+st.title("Dataset summary")
+st.markdown("Counts from exported `summary.json` in each bundle.")
+
+if not datasets:
+    st.warning(f"No bundles under `{root}`.")
+    st.stop()
+
+import pandas as pd
+
+rows = [load_dataset_summary(ds, root) for ds in datasets]
+df = pd.DataFrame(rows)
+cols = ["dataset_id", "n_cells", "n_genes", "n_cell_types", "n_batches"]
+if "error" in df.columns:
+    cols.append("error")
+st.dataframe(df[[c for c in cols if c in df.columns]], use_container_width=True, hide_index=True)
+
+with st.expander("Field definitions"):
+    st.markdown(
+        """
+- **n_cells**: observations in the reference atlas
+- **n_genes**: features in reference
+- **n_cell_types**: unique `cell_type` labels (0 if missing)
+- **n_batches**: unique `batch` labels (0 if missing)
+        """
+    )
+
+st.subheader("Catalog")
+st.dataframe(
+    pd.DataFrame(
+        [
+            {
+                "dataset": s.dataset_id,
+                "models": ", ".join(s.models),
+                "n_cells": s.n_cells,
+            }
+            for s in catalog_table(root)
+        ]
+    ),
+    use_container_width=True,
+    hide_index=True,
+)

@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_ARTIFACTS_ROOT = Path(
-    "/vault/amoneim/scfm-controlled-manipulations/processed/sceval"
-)
+# Repo root: metrics_dashboard/metrics_dashboard/config.py -> parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+BUNDLE_ROOT = _REPO_ROOT / "data" / "dashboard_bundles"
 
-# Canonical model order and display labels (add new models here).
 MODEL_ORDER = [
     "pca",
     "scgpt",
@@ -29,7 +27,6 @@ MODEL_LABELS: dict[str, str] = {
     "scconcept": "scConcept",
 }
 
-# High-contrast, colorblind-friendly palette (one color per model, stable across plots).
 MODEL_COLORS: dict[str, str] = {
     "pca": "#0072B2",
     "scgpt": "#E69F00",
@@ -47,19 +44,6 @@ PARAM_KEYS = {
     "gene_shuffle": "variant",
 }
 
-VALUE_COLUMNS = [
-    "value_mean",
-    "value_median",
-    "value_std",
-    "value_min",
-    "value_max",
-    "value_q05",
-    "value_q25",
-    "value_q75",
-    "value_q95",
-]
-
-# Manipulations shown in Set 1/3 grids (order preserved).
 MANIPULATION_ORDER = [
     "downsample",
     "gene_dropout",
@@ -73,8 +57,6 @@ REFERENCE_INTERVENTION_NAMES = frozenset({"reference"})
 
 @dataclass(frozen=True)
 class DashboardMetric:
-    """User-facing metric selector mapped to evaluation CSV rows."""
-
     key: str
     label: str
     description: str
@@ -84,7 +66,7 @@ class DashboardMetric:
     default_k: int | None = 15
     default_diffusion_t: int | None = None
     default_resolution: float | None = None
-    x_col: str = "param_value"  # clustering uses "resolution"
+    x_col: str = "param_value"
 
     @property
     def y_label(self) -> str:
@@ -149,60 +131,32 @@ DASHBOARD_METRIC_KEYS = list(DASHBOARD_METRICS.keys())
 
 PLOT_SET_DESCRIPTIONS = {
     "set1": (
-        "Sweep plots: each row is a manipulation, each column a sweep facet "
-        "(e.g. k or diffusion time). Solid lines show the mean over cells; shaded "
-        "bands are mean ± 1 standard deviation across cells. Dashed lines are "
-        "permutation null means."
+        "Sweep plots: each row is a manipulation, each column a sweep facet. "
+        "Solid lines = mean over cells; shaded bands = mean ± 1 std across cells; "
+        "dashed lines = permutation null means."
     ),
     "set2": (
-        "Integration vs structure: each point is one run (model × intervention). "
-        "Lines connect points within the same manipulation. Correlation and "
-        "p-value are Pearson on displayed points."
+        "Integration vs structure: each point is one run. Lines connect points within "
+        "the same manipulation. Correlation and p-value are Pearson on displayed points."
     ),
     "set3": (
-        "Embedding collapse (within-cluster distance) and shift along manipulation "
-        "degree. Solid lines are cell means; shaded bands are mean ± 1 std across "
-        "cells. The first point is always the reference."
+        "Embedding collapse and shift along manipulation degree. "
+        "Solid lines = cell means; shaded bands = mean ± 1 std. First point = reference."
     ),
 }
 
-# Set 3 embedding metrics (embedding space).
 SET3_COLLAPSE_METRIC = "within_man_pairwise_l2"
 SET3_SHIFT_METRIC = "paired_cell_l2_norm"
 SET3_CATEGORY = "embedding_shift"
 SET3_SPACE = "embedding"
 
 
+def bundle_root() -> Path:
+    """Checked-in dashboard bundles under ``data/dashboard_bundles``."""
+    return BUNDLE_ROOT
+
+
 def model_palette(models: list[str] | None = None) -> dict[str, str]:
-    """Return color map for models present (or full registry)."""
     if models is None:
         return dict(MODEL_COLORS)
     return {m: MODEL_COLORS.get(m, "#888888") for m in models}
-
-
-def artifacts_root() -> Path:
-    """Root directory: env override, else repo ``data/dashboard_bundles``, else vault default."""
-    env = os.environ.get("SCFM_ARTIFACTS_ROOT")
-    if env:
-        return Path(env)
-    repo_bundles = Path(__file__).resolve().parents[2] / "data" / "dashboard_bundles"
-    if repo_bundles.is_dir() and any(repo_bundles.iterdir()):
-        return repo_bundles
-    return DEFAULT_ARTIFACTS_ROOT
-
-
-def results_dir(dataset_id: str, root: Path | None = None) -> Path:
-    base = root or artifacts_root()
-    return base / dataset_id / "results"
-
-
-def evaluation_dir(dataset_id: str, root: Path | None = None) -> Path:
-    return results_dir(dataset_id, root) / "evaluation"
-
-
-def manipulations_dir(dataset_id: str, root: Path | None = None) -> Path:
-    return results_dir(dataset_id, root) / "manipulations"
-
-
-def reference_h5ad_path(dataset_id: str, root: Path | None = None) -> Path:
-    return manipulations_dir(dataset_id, root) / "reference.h5ad"

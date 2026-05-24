@@ -11,7 +11,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from metrics_dashboard.config import MODEL_ORDER, PARAM_KEYS, evaluation_dir, manipulations_dir
+from metrics_dashboard.config import MODEL_ORDER, PARAM_KEYS
 
 METRICS_FILENAME = "metrics.parquet"
 SUMMARY_FILENAME = "summary.json"
@@ -174,8 +174,6 @@ def load_metrics_from_legacy(
 ) -> pd.DataFrame:
     """Load CSV metrics and join sweep params from manipulation h5ads."""
     ev = dataset_root / "results" / "evaluation"
-    if not ev.is_dir():
-        ev = evaluation_dir(dataset_id, dataset_root.parent)
 
     csv_paths = sorted(ev.glob("*_metrics.csv"))
     if models is not None:
@@ -203,8 +201,6 @@ def load_metrics_from_legacy(
         .to_dict()
     )
     manip = dataset_root / "results" / "manipulations"
-    if not manip.is_dir():
-        manip = manipulations_dir(dataset_id, dataset_root.parent)
 
     params_df = extract_intervention_params(
         manip,
@@ -281,8 +277,6 @@ def export_dataset_bundle(
     (out_dir / SUMMARY_FILENAME).write_text(json.dumps(summary, indent=2) + "\n")
 
     ev = dataset_root / "results" / "evaluation"
-    if not ev.is_dir():
-        ev = evaluation_dir(dataset_id, dataset_root.parent)
     source_files = {
         p.name: int(p.stat().st_mtime_ns)
         for p in sorted(ev.glob("*_metrics.csv"))

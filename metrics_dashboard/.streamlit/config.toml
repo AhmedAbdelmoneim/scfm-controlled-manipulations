@@ -5,13 +5,7 @@ port = 8501
 [browser]
 gatherUsageStats = false
 
+# Omit theme.base so users can pick Light / Dark / System in Settings → Theme.
 [theme]
-base = "light"
 primaryColor = "#2563eb"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f8fafc"
-textColor = "#0f172a"
 font = "sans serif"
-
-# Dark mode: user can switch via Streamlit Settings → Theme → Dark.
-# Plot colors adapt automatically in metrics_dashboard.style.

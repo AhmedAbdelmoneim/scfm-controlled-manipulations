@@ -1,12 +1,11 @@
-"""ScFMs Metrics Dashboard — home."""
+"""ScFMs Metrics Dashboard."""
 
 from __future__ import annotations
 
 import streamlit as st
 
-from metrics_dashboard.catalog import discover_datasets
-from metrics_dashboard.state import get_param_list, set_param_list, set_params
-from metrics_dashboard.ui import init_session_root, render_catalog_summary
+from metrics_dashboard.catalog import catalog_table, discover_datasets
+from metrics_dashboard.config import bundle_root
 
 st.set_page_config(
     page_title="ScFMs Metrics Dashboard",
@@ -18,40 +17,33 @@ st.set_page_config(
 st.title("ScFMs Metrics Dashboard")
 st.markdown(
     """
-Explore structure-evaluation metrics for single-cell foundation models under
-controlled manipulations. Artifacts are read from
-`{ARTIFACTS_ROOT}/{dataset}/results/evaluation/{model}_metrics.csv`.
+Structure-evaluation metrics for single-cell foundation models under controlled manipulations.
+Data is loaded from checked-in bundles in `data/dashboard_bundles/`.
 
-**Pages**
-- **Metrics** — manipulation sweeps, integration correlations, embedding collapse/shift.
-- **Dataset summary** — cells, genes, cell types, batches per atlas.
-- **Compare** / **Model card** — legacy views (use Metrics for the primary workflow).
-
-Use the sidebar to set the artifacts root. Select datasets and models on the Metrics page.
-Toggle light/dark appearance via Streamlit settings (⋮ menu → Settings → Theme).
+Use **Metrics** in the sidebar for plots. Use **Dataset summary** for atlas sizes.
+Switch light/dark mode via the Streamlit menu (⋮ → Settings → Theme).
 """
 )
 
-root = init_session_root()
-st.sidebar.caption(f"Artifacts: `{root}`")
-
-if st.sidebar.button("Refresh catalog"):
-    st.cache_data.clear()
-    st.rerun()
-
+root = bundle_root()
 datasets = discover_datasets(root)
-if datasets:
-    default_ds = get_param_list("datasets") or datasets[:1]
-    ds_pick = st.sidebar.multiselect("Quick datasets", datasets, default=[d for d in default_ds if d in datasets] or datasets[:1])
-    from metrics_dashboard.catalog import discover_models
 
-    if ds_pick:
-        ev_models = discover_models(root / ds_pick[0])
-        models = st.sidebar.multiselect("Quick models", ev_models, default=ev_models)
-        if st.sidebar.button("Apply to URL"):
-            set_params(datasets=",".join(ds_pick))
-            set_param_list("models", models)
-            st.rerun()
+if not datasets:
+    st.warning(
+        f"No bundles found under `{root}`. "
+        "Export with: `make export-dashboard-bundle SOURCE=/path/to/sceval/dataset`"
+    )
+else:
+    import pandas as pd
 
-st.subheader("Dataset catalog")
-render_catalog_summary(root)
+    st.subheader("Available datasets")
+    rows = [
+        {
+            "dataset": s.dataset_id,
+            "models": ", ".join(s.models),
+            "n_cells": s.n_cells if s.n_cells is not None else "—",
+            "updated": s.last_modified.isoformat() if s.last_modified else "—",
+        }
+        for s in catalog_table(root)
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)

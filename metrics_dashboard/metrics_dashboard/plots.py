@@ -14,7 +14,7 @@ from metrics_dashboard.config import (
     MODEL_ORDER,
     model_palette,
 )
-from metrics_dashboard.style import apply_minimal_axes, plot_colors
+from metrics_dashboard.style import apply_minimal_axes, configure_matplotlib, plot_colors
 from metrics_dashboard.transforms import sort_models, std_bounds
 
 
@@ -23,6 +23,7 @@ def _model_label(m: str) -> str:
 
 
 def _empty_fig(message: str = "No data", figsize: tuple[float, float] = (4, 3)) -> Figure:
+    configure_matplotlib()
     fig, ax = plt.subplots(figsize=figsize)
     ax.text(0.5, 0.5, message, ha="center", va="center", color=plot_colors()["text"])
     ax.set_axis_off()
@@ -86,6 +87,7 @@ def plot_set1_grid(
     facet_col: str | None,
     models: list[str],
 ) -> Figure:
+    configure_matplotlib()
     nrows = max(1, len(row_labels))
     ncols = max(1, len(col_labels))
     fig, axes = plt.subplots(
@@ -143,6 +145,7 @@ def plot_set2_correlation(
     connect_by_intervention: bool = True,
     models: list[str],
 ) -> Figure:
+    configure_matplotlib()
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
     palette = model_palette(models)
     pairs = [
@@ -235,6 +238,7 @@ def plot_set3_row(
     collapse_label: str = "Within-cluster distance",
     shift_label: str = "Embedding shift (paired L2)",
 ) -> Figure:
+    configure_matplotlib()
     ncols = max(1, len(manipulations))
     fig, axes = plt.subplots(2, ncols, figsize=(4.0 * ncols, 7), squeeze=False)
     palette = model_palette(models)
