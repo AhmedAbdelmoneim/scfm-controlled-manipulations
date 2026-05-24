@@ -67,7 +67,7 @@ def render_dashboard_controls(
 
     ev_models: list[str] = []
     for ds in selected_datasets:
-        ev_models.extend(discover_models(root / ds / "results" / "evaluation"))
+        ev_models.extend(discover_models(root / ds))
     ev_models = sorted(set(ev_models), key=lambda m: MODEL_ORDER.index(m) if m in MODEL_ORDER else 99)
 
     qp_models = get_param_list("models")

@@ -46,7 +46,7 @@ if datasets:
     from metrics_dashboard.catalog import discover_models
 
     if ds_pick:
-        ev_models = discover_models(root / ds_pick[0] / "results" / "evaluation")
+        ev_models = discover_models(root / ds_pick[0])
         models = st.sidebar.multiselect("Quick models", ev_models, default=ev_models)
         if st.sidebar.button("Apply to URL"):
             set_params(datasets=",".join(ds_pick))

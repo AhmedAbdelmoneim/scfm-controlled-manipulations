@@ -181,8 +181,14 @@ def model_palette(models: list[str] | None = None) -> dict[str, str]:
 
 
 def artifacts_root() -> Path:
-    """Root directory containing per-dataset SCEval processed outputs."""
-    return Path(os.environ.get("SCFM_ARTIFACTS_ROOT", DEFAULT_ARTIFACTS_ROOT))
+    """Root directory: env override, else repo ``data/dashboard_bundles``, else vault default."""
+    env = os.environ.get("SCFM_ARTIFACTS_ROOT")
+    if env:
+        return Path(env)
+    repo_bundles = Path(__file__).resolve().parents[2] / "data" / "dashboard_bundles"
+    if repo_bundles.is_dir() and any(repo_bundles.iterdir()):
+        return repo_bundles
+    return DEFAULT_ARTIFACTS_ROOT
 
 
 def results_dir(dataset_id: str, root: Path | None = None) -> Path:

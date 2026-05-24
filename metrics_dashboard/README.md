@@ -4,11 +4,34 @@ Streamlit app for exploring structure-evaluation metrics produced by `make evalu
 
 ## Artifacts layout
 
+The dashboard reads either a **minimal bundle** (recommended for git) or a full SCEval tree on disk.
+
+### Minimal bundle (Parquet, no h5ads in repo)
+
+```text
+{ARTIFACTS_ROOT}/{dataset_id}/
+  metrics.parquet      # all models, params pre-joined
+  summary.json         # cells / genes / cell types / batches
+  manifest.json        # export provenance
+```
+
+Export from vault:
+
+```bash
+make export-dashboard-bundle SOURCE=/vault/.../processed/sceval/dendritic_cells
+# or all datasets:
+make export-dashboard-bundle SOURCE=/vault/.../processed/sceval
+```
+
+Output defaults to `data/dashboard_bundles/`. Point the dashboard at that directory
+(`SCFM_ARTIFACTS_ROOT=data/dashboard_bundles` or the sidebar path).
+
+### Legacy SCEval tree
+
 ```text
 {SCFM_ARTIFACTS_ROOT}/{dataset_id}/results/
   evaluation/{model}_metrics.csv
   manipulations/{intervention_id}.h5ad
-  manipulations/reference.h5ad
 ```
 
 Default root: `/vault/amoneim/scfm-controlled-manipulations/processed/sceval`

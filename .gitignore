@@ -1,6 +1,10 @@
 # Data
-/data/
+/data/**
 
+!/data/
+!/data/dashboard_bundles/
+!/data/dashboard_bundles/**/
+!/data/dashboard_bundles/**
 # Mac OS-specific storage files
 .DS_Store
 
