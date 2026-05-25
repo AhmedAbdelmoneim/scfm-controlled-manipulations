@@ -109,6 +109,35 @@ class TransformTest(unittest.TestCase):
         self.assertIn("downsample", rows)
         self.assertFalse(sub.empty)
 
+    def test_prepare_set1_grid_diffusion_t_columns(self) -> None:
+        """KL/JS should facet diffusion_t as columns, not collapse to a single panel."""
+        rows_data = []
+        for t in (1.0, 2.0, 4.0):
+            for frac in (0.2, 0.5, 0.8):
+                rows_data.append(
+                    {
+                        "dataset_id": "ds1",
+                        "model": "pca",
+                        "intervention_id": "down_a",
+                        "intervention_name": "downsample",
+                        "metric_category": "knn_metrics",
+                        "metric_name": "diffusion_sym_kl",
+                        "space": "embedding",
+                        "value_mean": 0.1 * t,
+                        "value_std": 0.01,
+                        "k": 15,
+                        "diffusion_t": t,
+                        "param_value": str(frac),
+                        "param_key": "fraction",
+                    }
+                )
+        df = pd.DataFrame(rows_data)
+        spec = DASHBOARD_METRICS["kl_divergence"]
+        sub, row_labels, col_labels, facet = prepare_set1_grid(df, spec, ["pca"])
+        self.assertEqual(facet, "diffusion_t")
+        self.assertEqual(col_labels, ["1.0", "2.0", "4.0"])
+        self.assertIn("downsample", row_labels)
+
     def test_prepare_set2_correlation(self) -> None:
         df = self._toy_metrics()
         spec = DASHBOARD_METRICS["knn_recall"]

@@ -85,6 +85,17 @@ try:
         if sub1.empty:
             st.info("No rows for this metric.")
         else:
+            ncol, nrow = len(col_labels), len(row_labels)
+            facet_note = f" · columns by **{facet_col}**" if facet_col else ""
+            k_note = ""
+            if "k" in sub1.columns and sub1["k"].notna().any():
+                k_vals = sorted(sub1["k"].dropna().unique())
+                if len(k_vals) == 1:
+                    k_note = f" · k = {int(k_vals[0]) if k_vals[0] == int(k_vals[0]) else k_vals[0]}"
+            st.caption(
+                f"Set 1 grid: **{nrow}** manipulations × **{ncol}** column(s){facet_note}{k_note}. "
+                f"Sweep parameter on the x-axis (`{spec.x_col}`)."
+            )
             fig1 = plot_set1_grid(sub1, spec, row_labels, col_labels, facet_col, controls.models)
             log.info("set1 figure built in %.2fs", time.perf_counter() - t0)
             st.pyplot(fig1, clear_figure=True, use_container_width=True)

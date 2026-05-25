@@ -83,7 +83,15 @@ def filter_for_dashboard_metric(
     metrics_df: pd.DataFrame,
     spec: DashboardMetric,
     models: list[str],
+    *,
+    pin_hyperparameters: bool = True,
 ) -> pd.DataFrame:
+    """Filter to one dashboard metric and model list.
+
+    When ``pin_hyperparameters`` is False (Set 1 sweeps), keep all diffusion_t values
+    so they can become grid columns; still pin ``k`` to the default/nearest value.
+    When True (Set 2), pin k and diffusion_t to a single value per metric defaults.
+    """
     sub = metrics_df[
         (metrics_df["metric_category"] == spec.metric_category)
         & (metrics_df["metric_name"] == spec.metric_name)
@@ -97,7 +105,7 @@ def filter_for_dashboard_metric(
             if target not in k_vals:
                 target = float(sorted(k_vals)[0])
             sub = sub[sub["k"] == target]
-    if spec.default_diffusion_t is not None and "diffusion_t" in sub.columns:
+    if pin_hyperparameters and spec.default_diffusion_t is not None and "diffusion_t" in sub.columns:
         t_vals = sub["diffusion_t"].dropna().unique()
         if len(t_vals):
             target = spec.default_diffusion_t
@@ -129,7 +137,7 @@ def prepare_set1_grid(
     models: list[str],
 ) -> tuple[pd.DataFrame, list[str], list[str], str | None]:
     """Return filtered df, row interventions, column facet values, facet column name."""
-    sub = filter_for_dashboard_metric(metrics_df, spec, models)
+    sub = filter_for_dashboard_metric(metrics_df, spec, models, pin_hyperparameters=False)
     sub = sub[~sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
     interventions = [i for i in MANIPULATION_ORDER if i in sub["intervention_name"].unique()]
     extras = sorted(set(sub["intervention_name"].unique()) - set(interventions))

@@ -108,7 +108,12 @@ def plot_set1_grid(
                 cell = cell[cell[facet_col].astype(str) == str(col_val)]
             _plot_sweep_cell(ax, cell, x_col=x_col, y_label=spec.y_label, palette=palette)
             if ri == 0:
-                ax.set_title(str(col_val), fontsize=10)
+                title = str(col_val)
+                if facet_col == "diffusion_t":
+                    title = f"t = {col_val}"
+                elif facet_col == "k":
+                    title = f"k = {col_val}"
+                ax.set_title(title, fontsize=10)
             if ci == 0:
                 ax.set_ylabel(f"{intervention}\n{spec.y_label}", fontsize=9)
 
