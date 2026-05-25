@@ -11,7 +11,7 @@ make dashboard
 ### Streamlit Community Cloud
 
 - **Main file:** `metrics_dashboard/Home.py`
-- **App directory:** `metrics_dashboard/` (contains `requirements.txt`)
+- **App directory:** `metrics_dashboard/` (use `requirements.txt` only — do not add `uv.lock` here or Cloud will install a stale `metrics-dashboard` wheel and shadow the app code)
 - Ensure `data/dashboard_bundles/` is committed in the repo root.
 
 Use the sidebar **Appearance** control for light/dark plots (defaults to dark).
