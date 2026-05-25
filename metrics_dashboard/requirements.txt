@@ -5,3 +5,4 @@ pyarrow>=14
 matplotlib>=3.8
 numpy>=1.26
 scipy>=1.11
+plotly>=5.18

@@ -14,6 +14,7 @@ dependencies = [
     "pyarrow",
     "scipy",
     "streamlit>=1.30",
+    "plotly>=5.18",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -96,15 +96,22 @@ def _set1_column_title(cell_df: pd.DataFrame, col_val: str, column_facet: str) -
     return f"{param_key} = {col_val}"
 
 
-def plot_set1_grid(layout: Set1GridLayout, spec: DashboardMetric, models: list[str]) -> Figure:
+def plot_set1_grid(
+    layout: Set1GridLayout,
+    spec: DashboardMetric,
+    models: list[str],
+    *,
+    scale: float = 1.0,
+) -> Figure:
     configure_matplotlib()
     row_labels = layout.row_labels
     nrows = max(1, len(row_labels))
     ncols = max(1, max((len(cols) for cols in layout.col_labels_by_row.values()), default=1))
+    cell_w, cell_h = 5.2 * scale, 4.2 * scale
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(4.2 * ncols, 3.4 * nrows),
+        figsize=(min(cell_w * ncols, 56), min(cell_h * nrows, 42)),
         squeeze=False,
         sharex=False,
     )
@@ -162,9 +169,10 @@ def plot_set2_correlation(
     x_label: str,
     connect_by_intervention: bool = True,
     models: list[str],
+    scale: float = 1.0,
 ) -> Figure:
     configure_matplotlib()
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(min(12 * scale, 24), min(5 * scale, 12)))
     palette = model_palette(models)
     pairs = [
         ("metric_score", y_col, f"{x_label} vs {y_label}"),
@@ -255,10 +263,16 @@ def plot_set3_row(
     *,
     collapse_label: str = "Within-cluster distance",
     shift_label: str = "Embedding shift (paired L2)",
+    scale: float = 1.0,
 ) -> Figure:
     configure_matplotlib()
     ncols = max(1, len(manipulations))
-    fig, axes = plt.subplots(2, ncols, figsize=(4.0 * ncols, 7), squeeze=False)
+    fig, axes = plt.subplots(
+        2,
+        ncols,
+        figsize=(min(5.0 * scale * ncols, 56), min(8 * scale, 20)),
+        squeeze=False,
+    )
     palette = model_palette(models)
     ref_collapse = collapse_df[
         collapse_df["intervention_name"].isin({"reference"})

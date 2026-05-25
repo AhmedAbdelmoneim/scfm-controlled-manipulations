@@ -16,6 +16,8 @@ class DashboardControls:
     dataset_ids: list[str]
     models: list[str]
     metric_key: str
+    plot_scale: float
+    interactive_plots: bool
 
 
 def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
@@ -50,8 +52,25 @@ def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
         format_func=lambda k: DASHBOARD_METRICS[k].label,
     )
 
+    st.sidebar.markdown("**Plots**")
+    interactive_plots = st.sidebar.checkbox(
+        "Interactive (zoom & pan)",
+        value=True,
+        help="Plotly toolbar: zoom, pan, reset axes, download PNG.",
+    )
+    plot_scale = st.sidebar.slider(
+        "Plot size",
+        min_value=0.75,
+        max_value=2.0,
+        value=1.25,
+        step=0.05,
+        help="Scales subplot size (scroll the page for large grids).",
+    )
+
     return DashboardControls(
         dataset_ids=selected_datasets,
         models=models,
         metric_key=metric_key,
+        plot_scale=plot_scale,
+        interactive_plots=interactive_plots,
     )
