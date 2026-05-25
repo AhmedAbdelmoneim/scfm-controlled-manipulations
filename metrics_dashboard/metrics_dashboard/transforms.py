@@ -249,11 +249,42 @@ def prepare_set2_correlation(
     return wide
 
 
+def _reference_baseline_per_model(ref_within: pd.DataFrame) -> pd.DataFrame:
+    """``within_ref_pairwise_l2`` is identical across interventions; keep one row per model."""
+    if ref_within.empty:
+        return ref_within
+    return (
+        ref_within.groupby("model", observed=True)
+        .first()
+        .reset_index()
+    )
+
+
+def _zero_shift_reference_rows(ref_shift: pd.DataFrame) -> pd.DataFrame:
+    """Reference embedding vs itself → zero paired L2 shift (not within-ref pairwise scale)."""
+    out = ref_shift.copy()
+    for col in (
+        "value_mean",
+        "value_median",
+        "value_std",
+        "value_min",
+        "value_max",
+        "value_q05",
+        "value_q25",
+        "value_q75",
+        "value_q95",
+        "null_value",
+    ):
+        if col in out.columns:
+            out[col] = 0.0
+    return out
+
+
 def prepare_set3_embedding(
     metrics_df: pd.DataFrame,
     models: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Collapse (within_man) and shift (paired_cell); reference rows kept for plot prepending."""
+    """Collapse (within_man) and shift (paired_cell); reference baselines for plotting."""
     sub = metrics_df[
         (metrics_df["metric_category"] == SET3_CATEGORY)
         & (metrics_df["space"] == SET3_SPACE)
@@ -263,16 +294,17 @@ def prepare_set3_embedding(
     collapse = sub[sub["metric_name"] == SET3_COLLAPSE_METRIC].copy()
     shift = sub[sub["metric_name"] == SET3_SHIFT_METRIC].copy()
     ref_within = sub[sub["metric_name"] == "within_ref_pairwise_l2"].copy()
+    ref_base = _reference_baseline_per_model(ref_within)
 
-    if not ref_within.empty:
-        ref_c = ref_within.copy()
+    if not ref_base.empty:
+        ref_c = ref_base.copy()
         ref_c["metric_name"] = SET3_COLLAPSE_METRIC
         ref_c["param_value"] = 0.0
         ref_c["param_key"] = "reference"
         ref_c["intervention_name"] = "reference"
         collapse = pd.concat([ref_c, collapse], ignore_index=True)
 
-        ref_s = ref_within.copy()
+        ref_s = _zero_shift_reference_rows(ref_base)
         ref_s["metric_name"] = SET3_SHIFT_METRIC
         ref_s["param_value"] = 0.0
         ref_s["param_key"] = "reference"

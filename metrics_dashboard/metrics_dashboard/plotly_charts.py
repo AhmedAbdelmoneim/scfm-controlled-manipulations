@@ -15,6 +15,7 @@ from metrics_dashboard.config import (
 )
 from metrics_dashboard.plots import _prepend_reference_points, _set1_column_title
 from metrics_dashboard.style import streamlit_is_dark
+from metrics_dashboard.sweep_axis import sweep_x_positions
 from metrics_dashboard.transforms import Set1GridLayout, sort_models, std_bounds
 
 
@@ -36,6 +37,7 @@ def _add_sweep_traces(
     row: int,
     col: int,
     show_legend: bool,
+    intervention_name: str | None = None,
 ) -> None:
     if cell_df.empty:
         return
@@ -46,9 +48,22 @@ def _add_sweep_traces(
         mdf = plot_df[plot_df["model"].astype(str) == model]
         if mdf.empty:
             continue
-        mdf = mdf.sort_values(x_col, key=lambda s: pd.to_numeric(s, errors="coerce"))
-        x = pd.to_numeric(mdf[x_col], errors="coerce")
-        y = mdf["value_mean"].astype(float)
+        x, tick_labels, categorical = sweep_x_positions(
+            mdf, x_col, intervention_name=intervention_name
+        )
+        order = np.argsort(x)
+        x = x[order]
+        y = mdf["value_mean"].astype(float).to_numpy()[order]
+        mdf = mdf.iloc[order]
+        if categorical and tick_labels:
+            fig.update_xaxes(
+                tickmode="array",
+                tickvals=list(range(len(tick_labels))),
+                ticktext=tick_labels,
+                tickangle=-35,
+                row=row,
+                col=col,
+            )
         color = palette.get(model, "#888888")
         label = _model_label(model)
         band_lo, band_hi = [], []
@@ -347,6 +362,7 @@ def plot_set3_row_plotly(
                 row=row_idx,
                 col=ci + 1,
                 show_legend=not legend_shown,
+                intervention_name=intervention,
             )
             legend_shown = True
             if ci == 0:

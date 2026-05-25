@@ -15,6 +15,7 @@ from metrics_dashboard.config import (
     model_palette,
 )
 from metrics_dashboard.style import apply_minimal_axes, configure_matplotlib, plot_colors
+from metrics_dashboard.sweep_axis import sweep_x_positions
 from metrics_dashboard.transforms import Set1GridLayout, sort_models, std_bounds
 
 
@@ -38,6 +39,7 @@ def _plot_sweep_cell(
     y_label: str,
     palette: dict[str, str],
     show_xlabel: bool = True,
+    intervention_name: str | None = None,
 ) -> None:
     if cell_df.empty:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
@@ -46,13 +48,19 @@ def _plot_sweep_cell(
 
     plot_df = sort_models(cell_df)
     colors = plot_colors()
+    tick_labels: list[str] = []
+    categorical = False
     for model in MODEL_ORDER:
         mdf = plot_df[plot_df["model"].astype(str) == model]
         if mdf.empty:
             continue
-        mdf = mdf.sort_values(x_col, key=lambda s: pd.to_numeric(s, errors="coerce"))
-        x = pd.to_numeric(mdf[x_col], errors="coerce")
-        y = mdf["value_mean"].astype(float)
+        x, tick_labels, categorical = sweep_x_positions(
+            mdf, x_col, intervention_name=intervention_name
+        )
+        order = np.argsort(x)
+        x = x[order]
+        y = mdf["value_mean"].astype(float).to_numpy()[order]
+        mdf = mdf.iloc[order]
         color = palette.get(model, "#888888")
         band_lo = []
         band_hi = []
@@ -65,12 +73,15 @@ def _plot_sweep_cell(
         if "null_value" in mdf.columns and mdf["null_value"].notna().any():
             ax.plot(
                 x,
-                mdf["null_value"].astype(float),
+                mdf["null_value"].astype(float).to_numpy(),
                 linestyle="--",
                 linewidth=1.2,
                 color=color,
                 alpha=0.55,
             )
+    if categorical and tick_labels:
+        ax.set_xticks(range(len(tick_labels)))
+        ax.set_xticklabels(tick_labels, rotation=35, ha="right", fontsize=8)
 
     if show_xlabel:
         if x_col == "diffusion_t":
@@ -329,6 +340,7 @@ def plot_set3_row(
                 y_label=ylab,
                 palette=palette,
                 show_xlabel=(row_idx == 1),
+                intervention_name=intervention,
             )
             if row_idx == 0:
                 ax.set_title(intervention, fontsize=10)

@@ -170,8 +170,9 @@ PLOT_SET_DESCRIPTIONS = {
         "the same manipulation. Correlation and p-value are Pearson on displayed points."
     ),
     "set3": (
-        "Embedding collapse and shift along manipulation degree. "
-        "Solid lines = cell means; shaded bands = mean ± 1 std. First point = reference."
+        "Columns = manipulation; x-axis = sweep level (numeric fraction/rate/k or shuffle "
+        "variant). Top row: within-manipulation pairwise distance (collapse). Bottom row: "
+        "per-cell embedding shift from reference (0 at reference). Lines = models."
     ),
 }
 
