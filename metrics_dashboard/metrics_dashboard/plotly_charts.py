@@ -188,7 +188,10 @@ def plot_set1_grid_plotly(
                 show_legend=not legend_shown,
             )
             legend_shown = True
-            fig.update_xaxes(title_text=_x_axis_title(cell, x_col), row=row, col=col)
+            if ri == nrows - 1:
+                fig.update_xaxes(title_text=_x_axis_title(cell, x_col), row=row, col=col)
+            else:
+                fig.update_xaxes(showticklabels=False, row=row, col=col)
             if ci == 0:
                 fig.update_yaxes(title_text=f"{intervention}", row=row, col=col)
 
@@ -337,8 +340,10 @@ def plot_set3_row_plotly(
             legend_shown = True
             if ci == 0:
                 fig.update_yaxes(title_text=ylab, row=row_idx, col=ci + 1)
-            if row_idx == 1:
+            if row_idx == 2:
                 fig.update_xaxes(title_text="Manipulation parameter", row=row_idx, col=ci + 1)
+            else:
+                fig.update_xaxes(showticklabels=False, row=row_idx, col=ci + 1)
 
     fig.update_layout(
         template=_plotly_template(),

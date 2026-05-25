@@ -37,6 +37,7 @@ def _plot_sweep_cell(
     x_col: str,
     y_label: str,
     palette: dict[str, str],
+    show_xlabel: bool = True,
 ) -> None:
     if cell_df.empty:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
@@ -71,14 +72,17 @@ def _plot_sweep_cell(
                 alpha=0.55,
             )
 
-    if x_col == "diffusion_t":
-        ax.set_xlabel("Diffusion time t")
-    elif x_col == "resolution":
-        ax.set_xlabel("Leiden resolution")
-    elif "param_key" in plot_df.columns and plot_df["param_key"].notna().any():
-        ax.set_xlabel(str(plot_df["param_key"].dropna().iloc[0]))
+    if show_xlabel:
+        if x_col == "diffusion_t":
+            ax.set_xlabel("Diffusion time t")
+        elif x_col == "resolution":
+            ax.set_xlabel("Leiden resolution")
+        elif "param_key" in plot_df.columns and plot_df["param_key"].notna().any():
+            ax.set_xlabel(str(plot_df["param_key"].dropna().iloc[0]))
+        else:
+            ax.set_xlabel(x_col)
     else:
-        ax.set_xlabel(x_col)
+        ax.tick_params(labelbottom=False)
     ax.set_ylabel(y_label)
     apply_minimal_axes(ax)
 
@@ -131,7 +135,14 @@ def plot_set1_grid(
             cell = sub[sub["intervention_name"] == intervention]
             if col_val != "all":
                 cell = cell[cell[column_facet].astype(str) == str(col_val)]
-            _plot_sweep_cell(ax, cell, x_col=x_col, y_label=spec.y_label, palette=palette)
+            _plot_sweep_cell(
+                ax,
+                cell,
+                x_col=x_col,
+                y_label=spec.y_label,
+                palette=palette,
+                show_xlabel=(ri == nrows - 1),
+            )
             if ri == 0:
                 ax.set_title(_set1_column_title(cell, col_val, column_facet), fontsize=10)
             if ci == 0:
@@ -299,6 +310,7 @@ def plot_set3_row(
                 x_col="param_value",
                 y_label=ylab,
                 palette=palette,
+                show_xlabel=(row_idx == 1),
             )
             if row_idx == 0:
                 ax.set_title(intervention, fontsize=10)
