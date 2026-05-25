@@ -287,7 +287,7 @@ def prepare_set3_embedding(
     metrics_df: pd.DataFrame,
     models: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Collapse (within_man) and shift (paired_cell), normalized by ref within-cluster distance."""
+    """Collapse (within_man, raw) and shift (paired_cell / ref within-cluster distance)."""
     sub = metrics_df[
         (metrics_df["metric_category"] == SET3_CATEGORY)
         & (metrics_df["space"] == SET3_SPACE)
@@ -298,9 +298,10 @@ def prepare_set3_embedding(
     ref_scale = _ref_within_scale_by_model(ref_within)
 
     collapse = sub[sub["metric_name"] == SET3_COLLAPSE_METRIC].copy()
-    shift = sub[sub["metric_name"] == SET3_SHIFT_METRIC].copy()
-    collapse = _normalize_embedding_shift_values(collapse, ref_scale)
-    shift = _normalize_embedding_shift_values(shift, ref_scale)
+    shift = _normalize_embedding_shift_values(
+        sub[sub["metric_name"] == SET3_SHIFT_METRIC].copy(),
+        ref_scale,
+    )
 
     ref_base = _reference_baseline_per_model(ref_within)
     if not ref_base.empty:
@@ -309,7 +310,6 @@ def prepare_set3_embedding(
         ref_c["param_value"] = 0.0
         ref_c["param_key"] = "reference"
         ref_c["intervention_name"] = "reference"
-        ref_c = _normalize_embedding_shift_values(ref_c, ref_scale)
         collapse = pd.concat([ref_c, collapse], ignore_index=True)
         # Shift row: no reference point (paired L2 at identity is always 0 and clutters the plot).
 

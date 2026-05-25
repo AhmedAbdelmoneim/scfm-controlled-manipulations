@@ -171,9 +171,9 @@ PLOT_SET_DESCRIPTIONS = {
     ),
     "set3": (
         "Columns = manipulation; x-axis = sweep level (numeric fraction/rate/k or shuffle "
-        "variant). Values are divided by each model's reference within-cluster pairwise L2 "
-        "(y = 1 at reference on the collapse row). Top row: within-manipulation spread. "
-        "Bottom row: per-cell shift from reference (no reference point on this row). Lines = models."
+        "variant). Top row: within-manipulation pairwise distance (collapse; reference point "
+        "at x=0). Bottom row: per-cell shift from reference divided by ref within-cluster "
+        "distance (no reference point on this row). Lines = models."
     ),
 }
 
@@ -181,7 +181,7 @@ SET3_COLLAPSE_METRIC = "within_man_pairwise_l2"
 SET3_SHIFT_METRIC = "paired_cell_l2_norm"
 SET3_CATEGORY = "embedding_shift"
 SET3_SPACE = "embedding"
-SET3_COLLAPSE_YLABEL = "Within spread / ref within"
+SET3_COLLAPSE_YLABEL = "Within-cluster distance"
 SET3_SHIFT_YLABEL = "Paired shift / ref within"
 
 
