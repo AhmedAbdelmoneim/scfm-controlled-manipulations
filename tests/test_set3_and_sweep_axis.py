@@ -35,12 +35,14 @@ class Set3PrepareTest(unittest.TestCase):
             )
         return pd.DataFrame(rows)
 
-    def test_shift_reference_is_zero_not_within_ref_scale(self) -> None:
+    def test_collapse_has_reference_shift_does_not(self) -> None:
         collapse, shift = prepare_set3_embedding(self._embedding_shift_rows(), ["pca"])
-        ref = shift[(shift["intervention_name"] == "reference") & (shift["model"] == "pca")]
-        self.assertEqual(len(ref), 1)
-        self.assertEqual(ref["value_mean"].iloc[0], 0.0)
+        self.assertEqual(
+            len(shift[(shift["intervention_name"] == "reference")]),
+            0,
+        )
         ref_c = collapse[(collapse["intervention_name"] == "reference") & (collapse["model"] == "pca")]
+        self.assertEqual(len(ref_c), 1)
         self.assertEqual(ref_c["value_mean"].iloc[0], 90.0)
 
 

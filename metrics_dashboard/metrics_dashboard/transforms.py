@@ -260,26 +260,6 @@ def _reference_baseline_per_model(ref_within: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _zero_shift_reference_rows(ref_shift: pd.DataFrame) -> pd.DataFrame:
-    """Reference embedding vs itself → zero paired L2 shift (not within-ref pairwise scale)."""
-    out = ref_shift.copy()
-    for col in (
-        "value_mean",
-        "value_median",
-        "value_std",
-        "value_min",
-        "value_max",
-        "value_q05",
-        "value_q25",
-        "value_q75",
-        "value_q95",
-        "null_value",
-    ):
-        if col in out.columns:
-            out[col] = 0.0
-    return out
-
-
 def prepare_set3_embedding(
     metrics_df: pd.DataFrame,
     models: list[str],
@@ -303,13 +283,7 @@ def prepare_set3_embedding(
         ref_c["param_key"] = "reference"
         ref_c["intervention_name"] = "reference"
         collapse = pd.concat([ref_c, collapse], ignore_index=True)
-
-        ref_s = _zero_shift_reference_rows(ref_base)
-        ref_s["metric_name"] = SET3_SHIFT_METRIC
-        ref_s["param_value"] = 0.0
-        ref_s["param_key"] = "reference"
-        ref_s["intervention_name"] = "reference"
-        shift = pd.concat([ref_s, shift], ignore_index=True)
+        # Shift row: no reference point (paired L2 at identity is always 0 and clutters the plot).
 
     return collapse, shift
 

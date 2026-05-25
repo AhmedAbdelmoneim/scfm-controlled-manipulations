@@ -172,7 +172,7 @@ PLOT_SET_DESCRIPTIONS = {
     "set3": (
         "Columns = manipulation; x-axis = sweep level (numeric fraction/rate/k or shuffle "
         "variant). Top row: within-manipulation pairwise distance (collapse). Bottom row: "
-        "per-cell embedding shift from reference (0 at reference). Lines = models."
+        "per-cell embedding shift from reference (no reference point on this row). Lines = models."
     ),
 }
 
