@@ -11,6 +11,8 @@ from metrics_dashboard.config import (
     DashboardMetric,
     MODEL_LABELS,
     MODEL_ORDER,
+    SET3_COLLAPSE_YLABEL,
+    SET3_SHIFT_YLABEL,
     model_palette,
 )
 from metrics_dashboard.plots import _prepend_reference_points, _set1_column_title
@@ -340,7 +342,7 @@ def plot_set3_row_plotly(
         shift_df["intervention_name"].isin({"reference"})
         | (shift_df["param_key"] == "reference")
     ]
-    row_titles = ["Within-cluster distance", "Embedding shift (paired L2)"]
+    row_titles = [SET3_COLLAPSE_YLABEL, SET3_SHIFT_YLABEL]
     legend_shown = False
 
     for ci, intervention in enumerate(manipulations):

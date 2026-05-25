@@ -43,7 +43,13 @@ class Set3PrepareTest(unittest.TestCase):
         )
         ref_c = collapse[(collapse["intervention_name"] == "reference") & (collapse["model"] == "pca")]
         self.assertEqual(len(ref_c), 1)
-        self.assertEqual(ref_c["value_mean"].iloc[0], 90.0)
+        self.assertAlmostEqual(ref_c["value_mean"].iloc[0], 1.0)
+
+        sweep = collapse[
+            (collapse["intervention_name"] == "downsample") & (collapse["model"] == "pca")
+        ]
+        self.assertAlmostEqual(sweep["value_mean"].iloc[0], 80.0 / 90.0)
+        self.assertAlmostEqual(shift["value_mean"].iloc[0], 50.0 / 90.0)
 
 
 class SweepAxisTest(unittest.TestCase):

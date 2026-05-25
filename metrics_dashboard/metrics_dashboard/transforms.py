@@ -260,28 +260,56 @@ def _reference_baseline_per_model(ref_within: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _ref_within_scale_by_model(ref_within: pd.DataFrame) -> pd.Series:
+    """Per-model reference within-cluster mean (denominator for Set 3 normalization)."""
+    if ref_within.empty:
+        return pd.Series(dtype=float)
+    return ref_within.groupby("model", observed=True)["value_mean"].first()
+
+
+def _normalize_embedding_shift_values(
+    df: pd.DataFrame,
+    ref_scale: pd.Series,
+) -> pd.DataFrame:
+    """Divide metric values by reference within-cluster distance for cross-model comparability."""
+    if df.empty or ref_scale.empty:
+        return df
+    out = df.copy()
+    denom = out["model"].astype(str).map(ref_scale).astype(float)
+    denom = denom.replace(0, np.nan)
+    for col in ("value_mean", "value_std", "value_median"):
+        if col in out.columns:
+            out[col] = out[col].astype(float) / denom
+    return out
+
+
 def prepare_set3_embedding(
     metrics_df: pd.DataFrame,
     models: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Collapse (within_man) and shift (paired_cell); reference baselines for plotting."""
+    """Collapse (within_man) and shift (paired_cell), normalized by ref within-cluster distance."""
     sub = metrics_df[
         (metrics_df["metric_category"] == SET3_CATEGORY)
         & (metrics_df["space"] == SET3_SPACE)
         & (metrics_df["model"].astype(str).isin(models))
     ].copy()
 
+    ref_within = sub[sub["metric_name"] == "within_ref_pairwise_l2"].copy()
+    ref_scale = _ref_within_scale_by_model(ref_within)
+
     collapse = sub[sub["metric_name"] == SET3_COLLAPSE_METRIC].copy()
     shift = sub[sub["metric_name"] == SET3_SHIFT_METRIC].copy()
-    ref_within = sub[sub["metric_name"] == "within_ref_pairwise_l2"].copy()
-    ref_base = _reference_baseline_per_model(ref_within)
+    collapse = _normalize_embedding_shift_values(collapse, ref_scale)
+    shift = _normalize_embedding_shift_values(shift, ref_scale)
 
+    ref_base = _reference_baseline_per_model(ref_within)
     if not ref_base.empty:
         ref_c = ref_base.copy()
         ref_c["metric_name"] = SET3_COLLAPSE_METRIC
         ref_c["param_value"] = 0.0
         ref_c["param_key"] = "reference"
         ref_c["intervention_name"] = "reference"
+        ref_c = _normalize_embedding_shift_values(ref_c, ref_scale)
         collapse = pd.concat([ref_c, collapse], ignore_index=True)
         # Shift row: no reference point (paired L2 at identity is always 0 and clutters the plot).
 

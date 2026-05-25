@@ -12,6 +12,8 @@ from metrics_dashboard.config import (
     DashboardMetric,
     MODEL_LABELS,
     MODEL_ORDER,
+    SET3_COLLAPSE_YLABEL,
+    SET3_SHIFT_YLABEL,
     model_palette,
 )
 from metrics_dashboard.style import apply_minimal_axes, configure_matplotlib, plot_colors
@@ -300,8 +302,8 @@ def plot_set3_row(
     manipulations: list[str],
     models: list[str],
     *,
-    collapse_label: str = "Within-cluster distance",
-    shift_label: str = "Embedding shift (paired L2)",
+    collapse_label: str = SET3_COLLAPSE_YLABEL,
+    shift_label: str = SET3_SHIFT_YLABEL,
     scale: float = 1.0,
 ) -> Figure:
     configure_matplotlib()
