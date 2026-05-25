@@ -159,10 +159,9 @@ DASHBOARD_METRIC_KEYS = list(DASHBOARD_METRICS.keys())
 
 PLOT_SET_DESCRIPTIONS = {
     "set1": (
-        "Grid layout: **rows** = manipulation type (downsample, gene dropout, …); "
-        "**columns** = diffusion time *t* (KL/JS) or *k* (kNN recall) when the metric "
-        "varies over that parameter; **x-axis** = manipulation sweep (e.g. downsampling "
-        "fraction, dropout rate). One subplot per row×column; colored lines = models. "
+        "Grid layout: **rows** = manipulation type; **columns** = manipulation config "
+        "(e.g. downsampling fraction, dropout rate); **x-axis** = diffusion time *t* for "
+        "KL/JS (or the relevant sweep for other metrics). Colored lines = models. "
         "Bands = mean ± 1 std across cells; dashed = permutation null mean."
     ),
     "set2": (

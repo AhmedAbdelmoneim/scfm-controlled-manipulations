@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -119,35 +121,68 @@ def filter_for_dashboard_metric(
     return sub
 
 
-def _facet_column_for_metric(spec: DashboardMetric, sub: pd.DataFrame) -> str | None:
-    if spec.metric_category == "knn_metrics" and spec.metric_name.startswith("diffusion"):
-        if "diffusion_t" in sub.columns and sub["diffusion_t"].nunique() > 1:
-            return "diffusion_t"
-        if "k" in sub.columns and sub["k"].nunique() > 1:
-            return "k"
-    if spec.metric_category == "knn_metrics" and spec.metric_name == "knn_recall":
-        if "k" in sub.columns and sub["k"].nunique() > 1:
-            return "k"
-    return None
+def _sort_numeric_str_labels(values) -> list[str]:
+    series = pd.Series(values).dropna().astype(str)
+    if series.empty:
+        return []
+    order = sorted(series.unique(), key=lambda v: float(pd.to_numeric(v, errors="coerce")))
+    return [str(v) for v in order]
+
+
+def _set1_x_col(spec: DashboardMetric, sub: pd.DataFrame) -> str:
+    """Sweep dimension plotted on the x-axis within each Set 1 cell."""
+    if (
+        spec.metric_category == "knn_metrics"
+        and spec.metric_name.startswith("diffusion")
+        and "diffusion_t" in sub.columns
+        and sub["diffusion_t"].notna().any()
+    ):
+        return "diffusion_t"
+    if spec.x_col == "resolution" and "resolution" in sub.columns:
+        return "resolution"
+    return "param_value"
+
+
+@dataclass(frozen=True)
+class Set1GridLayout:
+    data: pd.DataFrame
+    row_labels: list[str]
+    col_labels_by_row: dict[str, list[str]]
+    x_col: str
+    column_facet: str = "param_value"
 
 
 def prepare_set1_grid(
     metrics_df: pd.DataFrame,
     spec: DashboardMetric,
     models: list[str],
-) -> tuple[pd.DataFrame, list[str], list[str], str | None]:
-    """Return filtered df, row interventions, column facet values, facet column name."""
+) -> Set1GridLayout:
+    """Build Set 1 layout: rows = manipulation, columns = config, x = sweep hyperparameter."""
     sub = filter_for_dashboard_metric(metrics_df, spec, models, pin_hyperparameters=False)
     sub = sub[~sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
     interventions = [i for i in MANIPULATION_ORDER if i in sub["intervention_name"].unique()]
     extras = sorted(set(sub["intervention_name"].unique()) - set(interventions))
     row_labels = interventions + extras
-    facet_col = _facet_column_for_metric(spec, sub)
-    if facet_col:
-        col_labels = sorted(sub[facet_col].dropna().unique())
+
+    x_col = _set1_x_col(spec, sub)
+    column_facet = "param_value"
+    col_labels_by_row: dict[str, list[str]] = {}
+
+    if x_col == column_facet:
+        # e.g. kNN recall: sweep param_value on x-axis, no per-config columns
+        col_labels_by_row = {name: ["all"] for name in row_labels}
     else:
-        col_labels = ["all"]
-    return sub, row_labels, [str(c) for c in col_labels], facet_col
+        for name in row_labels:
+            part = sub[sub["intervention_name"] == name]
+            col_labels_by_row[name] = _sort_numeric_str_labels(part[column_facet].unique())
+
+    return Set1GridLayout(
+        data=sub,
+        row_labels=row_labels,
+        col_labels_by_row=col_labels_by_row,
+        x_col=x_col,
+        column_facet=column_facet,
+    )
 
 
 def prepare_set2_correlation(

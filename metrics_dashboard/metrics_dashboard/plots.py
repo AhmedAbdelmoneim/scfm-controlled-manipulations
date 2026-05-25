@@ -15,7 +15,7 @@ from metrics_dashboard.config import (
     model_palette,
 )
 from metrics_dashboard.style import apply_minimal_axes, configure_matplotlib, plot_colors
-from metrics_dashboard.transforms import sort_models, std_bounds
+from metrics_dashboard.transforms import Set1GridLayout, sort_models, std_bounds
 
 
 def _model_label(m: str) -> str:
@@ -71,7 +71,11 @@ def _plot_sweep_cell(
                 alpha=0.55,
             )
 
-    if "param_key" in plot_df.columns and plot_df["param_key"].notna().any():
+    if x_col == "diffusion_t":
+        ax.set_xlabel("Diffusion time t")
+    elif x_col == "resolution":
+        ax.set_xlabel("Leiden resolution")
+    elif "param_key" in plot_df.columns and plot_df["param_key"].notna().any():
         ax.set_xlabel(str(plot_df["param_key"].dropna().iloc[0]))
     else:
         ax.set_xlabel(x_col)
@@ -79,17 +83,24 @@ def _plot_sweep_cell(
     apply_minimal_axes(ax)
 
 
-def plot_set1_grid(
-    sub: pd.DataFrame,
-    spec: DashboardMetric,
-    row_labels: list[str],
-    col_labels: list[str],
-    facet_col: str | None,
-    models: list[str],
-) -> Figure:
+def _set1_column_title(cell_df: pd.DataFrame, col_val: str, column_facet: str) -> str:
+    if col_val == "all":
+        return ""
+    if cell_df.empty:
+        return str(col_val)
+    param_key = (
+        str(cell_df["param_key"].dropna().iloc[0])
+        if "param_key" in cell_df.columns and cell_df["param_key"].notna().any()
+        else column_facet
+    )
+    return f"{param_key} = {col_val}"
+
+
+def plot_set1_grid(layout: Set1GridLayout, spec: DashboardMetric, models: list[str]) -> Figure:
     configure_matplotlib()
+    row_labels = layout.row_labels
     nrows = max(1, len(row_labels))
-    ncols = max(1, len(col_labels))
+    ncols = max(1, max((len(cols) for cols in layout.col_labels_by_row.values()), default=1))
     fig, axes = plt.subplots(
         nrows,
         ncols,
@@ -98,22 +109,24 @@ def plot_set1_grid(
         sharex=False,
     )
     palette = model_palette(models)
-    x_col = spec.x_col
+    sub = layout.data
+    x_col = layout.x_col
+    column_facet = layout.column_facet
 
     for ri, intervention in enumerate(row_labels):
-        for ci, col_val in enumerate(col_labels):
+        row_cols = layout.col_labels_by_row.get(intervention, ["all"])
+        for ci in range(ncols):
             ax = axes[ri, ci]
+            if ci >= len(row_cols):
+                ax.set_axis_off()
+                continue
+            col_val = row_cols[ci]
             cell = sub[sub["intervention_name"] == intervention]
-            if facet_col:
-                cell = cell[cell[facet_col].astype(str) == str(col_val)]
+            if col_val != "all":
+                cell = cell[cell[column_facet].astype(str) == str(col_val)]
             _plot_sweep_cell(ax, cell, x_col=x_col, y_label=spec.y_label, palette=palette)
             if ri == 0:
-                title = str(col_val)
-                if facet_col == "diffusion_t":
-                    title = f"t = {col_val}"
-                elif facet_col == "k":
-                    title = f"k = {col_val}"
-                ax.set_title(title, fontsize=10)
+                ax.set_title(_set1_column_title(cell, col_val, column_facet), fontsize=10)
             if ci == 0:
                 ax.set_ylabel(f"{intervention}\n{spec.y_label}", fontsize=9)
 

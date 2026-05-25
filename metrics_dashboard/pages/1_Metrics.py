@@ -78,25 +78,27 @@ try:
     st.subheader("Set 1 — Manipulation sweeps")
     with st.spinner("Building Set 1 plot…"):
         t0 = time.perf_counter()
-        sub1, row_labels, col_labels, facet_col = prepare_set1_grid(
-            metrics_df, spec, controls.models
+        layout1 = prepare_set1_grid(metrics_df, spec, controls.models)
+        ncol = max((len(c) for c in layout1.col_labels_by_row.values()), default=1)
+        log.info(
+            "set1 grid %d x %d (max cols) prepared in %.2fs",
+            len(layout1.row_labels),
+            ncol,
+            time.perf_counter() - t0,
         )
-        log.info("set1 grid %d x %d prepared in %.2fs", len(row_labels), len(col_labels), time.perf_counter() - t0)
-        if sub1.empty:
+        if layout1.data.empty:
             st.info("No rows for this metric.")
         else:
-            ncol, nrow = len(col_labels), len(row_labels)
-            facet_note = f" · columns by **{facet_col}**" if facet_col else ""
             k_note = ""
-            if "k" in sub1.columns and sub1["k"].notna().any():
-                k_vals = sorted(sub1["k"].dropna().unique())
+            if "k" in layout1.data.columns and layout1.data["k"].notna().any():
+                k_vals = sorted(layout1.data["k"].dropna().unique())
                 if len(k_vals) == 1:
                     k_note = f" · k = {int(k_vals[0]) if k_vals[0] == int(k_vals[0]) else k_vals[0]}"
             st.caption(
-                f"Set 1 grid: **{nrow}** manipulations × **{ncol}** column(s){facet_note}{k_note}. "
-                f"Sweep parameter on the x-axis (`{spec.x_col}`)."
+                f"Set 1: **{len(layout1.row_labels)}** manipulations × config columns "
+                f"(up to **{ncol}** per row) · x-axis = **{layout1.x_col}**{k_note}."
             )
-            fig1 = plot_set1_grid(sub1, spec, row_labels, col_labels, facet_col, controls.models)
+            fig1 = plot_set1_grid(layout1, spec, controls.models)
             log.info("set1 figure built in %.2fs", time.perf_counter() - t0)
             st.pyplot(fig1, clear_figure=True, use_container_width=True)
 

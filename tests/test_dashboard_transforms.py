@@ -105,12 +105,13 @@ class TransformTest(unittest.TestCase):
     def test_prepare_set1_grid(self) -> None:
         df = self._toy_metrics()
         spec = DASHBOARD_METRICS["knn_recall"]
-        sub, rows, cols, facet = prepare_set1_grid(df, spec, ["pca", "scgpt"])
-        self.assertIn("downsample", rows)
-        self.assertFalse(sub.empty)
+        layout = prepare_set1_grid(df, spec, ["pca", "scgpt"])
+        self.assertIn("downsample", layout.row_labels)
+        self.assertFalse(layout.data.empty)
+        self.assertEqual(layout.x_col, "param_value")
 
-    def test_prepare_set1_grid_diffusion_t_columns(self) -> None:
-        """KL/JS should facet diffusion_t as columns, not collapse to a single panel."""
+    def test_prepare_set1_grid_kl_layout(self) -> None:
+        """KL/JS: columns = manipulation config, x-axis = diffusion_t."""
         rows_data = []
         for t in (1.0, 2.0, 4.0):
             for frac in (0.2, 0.5, 0.8):
@@ -133,10 +134,10 @@ class TransformTest(unittest.TestCase):
                 )
         df = pd.DataFrame(rows_data)
         spec = DASHBOARD_METRICS["kl_divergence"]
-        sub, row_labels, col_labels, facet = prepare_set1_grid(df, spec, ["pca"])
-        self.assertEqual(facet, "diffusion_t")
-        self.assertEqual(col_labels, ["1.0", "2.0", "4.0"])
-        self.assertIn("downsample", row_labels)
+        layout = prepare_set1_grid(df, spec, ["pca"])
+        self.assertEqual(layout.x_col, "diffusion_t")
+        self.assertEqual(layout.col_labels_by_row["downsample"], ["0.2", "0.5", "0.8"])
+        self.assertIn("downsample", layout.row_labels)
 
     def test_prepare_set2_correlation(self) -> None:
         df = self._toy_metrics()
