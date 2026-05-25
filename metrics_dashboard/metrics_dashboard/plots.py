@@ -75,6 +75,8 @@ def _plot_sweep_cell(
     if show_xlabel:
         if x_col == "diffusion_t":
             ax.set_xlabel("Diffusion time t")
+        elif x_col == "k":
+            ax.set_xlabel("k")
         elif x_col == "resolution":
             ax.set_xlabel("Leiden resolution")
         elif "param_key" in plot_df.columns and plot_df["param_key"].notna().any():

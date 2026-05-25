@@ -108,7 +108,35 @@ class TransformTest(unittest.TestCase):
         layout = prepare_set1_grid(df, spec, ["pca", "scgpt"])
         self.assertIn("downsample", layout.row_labels)
         self.assertFalse(layout.data.empty)
-        self.assertEqual(layout.x_col, "param_value")
+        self.assertEqual(layout.x_col, "k")
+        self.assertNotEqual(layout.col_labels_by_row.get("downsample"), ["all"])
+
+    def test_prepare_set1_grid_knn_recall_layout(self) -> None:
+        """kNN recall: columns = config, x-axis = k."""
+        rows_data = []
+        for k in (5, 15, 50):
+            for frac in (0.2, 0.8):
+                rows_data.append(
+                    {
+                        "dataset_id": "ds1",
+                        "model": "pca",
+                        "intervention_id": "down_a",
+                        "intervention_name": "downsample",
+                        "metric_category": "knn_metrics",
+                        "metric_name": "knn_recall",
+                        "space": "embedding",
+                        "value_mean": 0.01 * k,
+                        "value_std": 0.01,
+                        "k": k,
+                        "param_value": str(frac),
+                        "param_key": "fraction",
+                    }
+                )
+        df = pd.DataFrame(rows_data)
+        spec = DASHBOARD_METRICS["knn_recall"]
+        layout = prepare_set1_grid(df, spec, ["pca"])
+        self.assertEqual(layout.x_col, "k")
+        self.assertEqual(layout.col_labels_by_row["downsample"], ["0.2", "0.8"])
 
     def test_prepare_set1_grid_kl_layout(self) -> None:
         """KL/JS: columns = manipulation config, x-axis = diffusion_t."""

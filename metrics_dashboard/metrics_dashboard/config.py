@@ -160,8 +160,9 @@ DASHBOARD_METRIC_KEYS = list(DASHBOARD_METRICS.keys())
 PLOT_SET_DESCRIPTIONS = {
     "set1": (
         "Grid layout: **rows** = manipulation type; **columns** = manipulation config "
-        "(e.g. downsampling fraction, dropout rate); **x-axis** = diffusion time *t* for "
-        "KL/JS (or the relevant sweep for other metrics). Colored lines = models. "
+        "(e.g. fraction, dropout rate, shuffle variant); **x-axis** = diffusion time *t* "
+        "for KL/JS, **k** for kNN recall, or the relevant sweep for other metrics. "
+        "Colored lines = models. "
         "Bands = mean ± 1 std across cells; dashed = permutation null mean."
     ),
     "set2": (

@@ -123,6 +123,8 @@ def _rgba(hex_color: str, alpha: float) -> str:
 def _x_axis_title(cell_df: pd.DataFrame, x_col: str) -> str:
     if x_col == "diffusion_t":
         return "Diffusion time t"
+    if x_col == "k":
+        return "k"
     if x_col == "resolution":
         return "Leiden resolution"
     if "param_key" in cell_df.columns and cell_df["param_key"].notna().any():

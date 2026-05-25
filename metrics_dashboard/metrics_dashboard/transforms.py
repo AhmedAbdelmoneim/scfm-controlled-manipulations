@@ -90,9 +90,9 @@ def filter_for_dashboard_metric(
 ) -> pd.DataFrame:
     """Filter to one dashboard metric and model list.
 
-    When ``pin_hyperparameters`` is False (Set 1 sweeps), keep all diffusion_t values
-    so they can become grid columns; still pin ``k`` to the default/nearest value.
-    When True (Set 2), pin k and diffusion_t to a single value per metric defaults.
+    When ``pin_hyperparameters`` is False (Set 1 sweeps), keep the sweep dimension on the
+    x-axis (all ``diffusion_t`` for KL/JS, all ``k`` for kNN recall) and pin the other
+    hyperparameter. When True (Set 2), pin both to a single value.
     """
     sub = metrics_df[
         (metrics_df["metric_category"] == spec.metric_category)
@@ -100,7 +100,10 @@ def filter_for_dashboard_metric(
         & (metrics_df["space"] == spec.space)
         & (metrics_df["model"].astype(str).isin(models))
     ].copy()
-    if spec.default_k is not None and "k" in sub.columns:
+    pin_k = True
+    if not pin_hyperparameters and spec.metric_name == "knn_recall":
+        pin_k = False
+    if pin_k and spec.default_k is not None and "k" in sub.columns:
         k_vals = sub["k"].dropna().unique()
         if len(k_vals):
             target = spec.default_k
@@ -138,6 +141,12 @@ def _set1_x_col(spec: DashboardMetric, sub: pd.DataFrame) -> str:
         and sub["diffusion_t"].notna().any()
     ):
         return "diffusion_t"
+    if (
+        spec.metric_name == "knn_recall"
+        and "k" in sub.columns
+        and sub["k"].notna().any()
+    ):
+        return "k"
     if spec.x_col == "resolution" and "resolution" in sub.columns:
         return "resolution"
     return "param_value"
