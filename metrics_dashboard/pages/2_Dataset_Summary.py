@@ -35,6 +35,9 @@ import pandas as pd
 rows = [load_dataset_summary(ds, root) for ds in datasets]
 df = pd.DataFrame(rows)
 cols = ["dataset_id", "n_cells", "n_genes", "n_cell_types", "n_batches"]
+for extra in ("cell_type_column", "batch_column", "cell_type_column_configured"):
+    if extra in df.columns:
+        cols.append(extra)
 if "error" in df.columns:
     cols.append("error")
 st.dataframe(df[[c for c in cols if c in df.columns]], use_container_width=True, hide_index=True)
@@ -44,8 +47,9 @@ with st.expander("Field definitions"):
         """
 - **n_cells**: observations in the reference atlas
 - **n_genes**: features in reference
-- **n_cell_types**: unique `cell_type` labels (0 if missing)
-- **n_batches**: unique `batch` labels (0 if missing)
+- **n_cell_types**: unique cell-type labels (from `cell_type`, `celltype`, etc.)
+- **n_batches**: unique batch labels (from `batch`, `sample_id`, etc.)
+- **cell_type_column** / **batch_column**: which `obs` columns were matched when exported
         """
     )
 

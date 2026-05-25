@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from metrics_dashboard.config import MODEL_ORDER, PARAM_KEYS
+from metrics_dashboard.obs_columns import resolve_batch_column, resolve_cell_type_column
 
 METRICS_FILENAME = "metrics.parquet"
 SUMMARY_FILENAME = "summary.json"
@@ -151,21 +152,31 @@ def extract_dataset_summary(
 
     adata = ad.read_h5ad(ref_path, backed="r")
     try:
-        return {
+        obs_cols = adata.obs.columns
+        resolved_cell_type = resolve_cell_type_column(obs_cols, cell_type_col)
+        resolved_batch = resolve_batch_column(obs_cols, batch_col)
+        out: dict[str, Any] = {
             "dataset_id": dataset_id,
             "n_cells": int(adata.n_obs),
             "n_genes": int(adata.n_vars),
             "n_cell_types": (
-                int(adata.obs[cell_type_col].nunique())
-                if cell_type_col in adata.obs.columns
+                int(adata.obs[resolved_cell_type].nunique())
+                if resolved_cell_type is not None
                 else 0
             ),
             "n_batches": (
-                int(adata.obs[batch_col].nunique())
-                if batch_col in adata.obs.columns
+                int(adata.obs[resolved_batch].nunique())
+                if resolved_batch is not None
                 else 0
             ),
         }
+        if resolved_cell_type is not None:
+            out["cell_type_column"] = resolved_cell_type
+        if resolved_batch is not None:
+            out["batch_column"] = resolved_batch
+        if cell_type_col and resolved_cell_type != cell_type_col:
+            out["cell_type_column_configured"] = cell_type_col
+        return out
     finally:
         adata.file.close()
 

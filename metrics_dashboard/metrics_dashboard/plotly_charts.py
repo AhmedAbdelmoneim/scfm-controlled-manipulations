@@ -165,6 +165,7 @@ def plot_set1_grid_plotly(
         subplot_titles=subplot_titles,
         horizontal_spacing=col_gap,
         vertical_spacing=row_gap,
+        shared_yaxes="all",
     )
     palette = model_palette(models)
     legend_shown = False
@@ -313,6 +314,7 @@ def plot_set3_row_plotly(
         subplot_titles=list(manipulations) + [""] * ncols,
         vertical_spacing=0.12,
         horizontal_spacing=0.06,
+        shared_yaxes="rows",
     )
     palette = model_palette(models)
     ref_collapse = collapse_df[

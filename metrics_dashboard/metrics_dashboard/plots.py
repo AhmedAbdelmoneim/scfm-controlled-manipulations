@@ -120,6 +120,7 @@ def plot_set1_grid(
         figsize=(min(cell_w * ncols, 56), min(cell_h * nrows, 42)),
         squeeze=False,
         sharex=False,
+        sharey=True,
         gridspec_kw={"hspace": 0.55, "wspace": 0.32},
     )
     palette = model_palette(models)
@@ -299,6 +300,7 @@ def plot_set3_row(
         ncols,
         figsize=(min(5.0 * scale * ncols, 56), min(8 * scale, 20)),
         squeeze=False,
+        sharey="row",
     )
     palette = model_palette(models)
     ref_collapse = collapse_df[

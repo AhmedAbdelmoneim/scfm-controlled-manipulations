@@ -124,6 +124,12 @@ try:
         if wide.empty or "metric_score" not in wide.columns:
             st.info("Insufficient data for correlation plots.")
         else:
+            if "cell_type_score" not in wide.columns or wide["cell_type_score"].notna().sum() == 0:
+                st.warning(
+                    "Cell-type ASW is missing from this bundle (evaluation did not find a "
+                    "cell-type column in reference `obs`, e.g. `cell_type` vs `celltype`). "
+                    "Re-run `make evaluate` after fixing `evaluation.cell_type_col`, then re-export."
+                )
             if controls.interactive_plots:
                 fig2 = plot_set2_correlation_plotly(
                     wide, x_label=spec.label, models=controls.models, scale=controls.plot_scale

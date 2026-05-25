@@ -18,6 +18,10 @@ import numpy as np
 import pandas as pd
 
 from scfm_controlled_manipulations.evaluation.context import load_dataset_context
+from scfm_controlled_manipulations.obs_columns import (
+    resolve_batch_column,
+    resolve_cell_type_column,
+)
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import log_cell_batch_obs_columns
 from scfm_controlled_manipulations.evaluation.metrics_common import VALUE_SUMMARY_COLUMNS
 from scfm_controlled_manipulations.evaluation.worker import (
@@ -269,8 +273,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     distance_metrics = list(ev["distance_metrics"])
     diffusion_t_values = [int(t) for t in ev["diffusion_t_values"]]
     leiden_resolutions = [float(x) for x in ev["leiden_resolutions"]]
-    cell_type_col = _optional_obs_column(ev.get("cell_type_col"))
-    batch_col = _optional_obs_column(ev.get("batch_col"))
+    cell_type_col_config = _optional_obs_column(ev.get("cell_type_col"))
+    batch_col_config = _optional_obs_column(ev.get("batch_col"))
     stats_shift_pairwise_cell_subsample_n = int(
         ev.get("stats_shift_pairwise_cell_subsample_n", 500)
     )
@@ -325,6 +329,26 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     t0 = time.perf_counter()
     dataset_ctx = load_dataset_context(results_dir)
     knn_cache = dataset_ctx.knn_cache
+    obs_cols = dataset_ctx.obs.columns
+    cell_type_col = resolve_cell_type_column(obs_cols, cell_type_col_config)
+    batch_col = resolve_batch_column(obs_cols, batch_col_config)
+    if cell_type_col_config and cell_type_col != cell_type_col_config:
+        logger.info(
+            "Resolved cell_type_col %r -> %r in reference obs",
+            cell_type_col_config,
+            cell_type_col,
+        )
+    elif cell_type_col_config and cell_type_col is None:
+        logger.warning(
+            "cell_type_col %r not found in reference obs (tried aliases); cell_type_asw skipped",
+            cell_type_col_config,
+        )
+    if batch_col_config and batch_col != batch_col_config:
+        logger.info(
+            "Resolved batch_col %r -> %r in reference obs",
+            batch_col_config,
+            batch_col,
+        )
     logger.info(
         "Reference raw loaded: n_cells=%d (%.1fs)",
         dataset_ctx.n_cells,
