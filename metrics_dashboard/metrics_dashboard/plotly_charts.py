@@ -149,7 +149,7 @@ def plot_set1_grid_plotly(
     for ri, intervention in enumerate(row_labels):
         row_cols = layout.col_labels_by_row.get(intervention, ["all"])
         for ci in range(ncols):
-            if ri == 0 and ci < len(row_cols):
+            if ci < len(row_cols):
                 col_val = row_cols[ci]
                 cell = layout.data[layout.data["intervention_name"] == intervention]
                 if col_val != "all":
@@ -157,12 +157,14 @@ def plot_set1_grid_plotly(
                 subplot_titles.append(_set1_column_title(cell, col_val, layout.column_facet))
             else:
                 subplot_titles.append("")
+    row_gap = min(0.06 + 0.025 * scale, 0.14)
+    col_gap = min(0.05 + 0.02 * scale, 0.12)
     fig = make_subplots(
         rows=nrows,
         cols=ncols,
         subplot_titles=subplot_titles,
-        horizontal_spacing=0.06,
-        vertical_spacing=0.08,
+        horizontal_spacing=col_gap,
+        vertical_spacing=row_gap,
     )
     palette = model_palette(models)
     legend_shown = False
@@ -197,16 +199,20 @@ def plot_set1_grid_plotly(
             if ci == 0:
                 fig.update_yaxes(title_text=f"{intervention}", row=row, col=col)
 
-    cell_h = min(320 * scale, 520)
-    cell_w = min(260 * scale, 420)
+    cell_h = min(340 * scale, 540)
+    cell_w = min(280 * scale, 440)
     fig.update_layout(
         template=_plotly_template(),
-        title=dict(text=spec.label, x=0.5),
-        height=min(cell_h * nrows + 80, 3200),
-        width=min(cell_w * ncols + 120, 3200),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.5, xanchor="center"),
-        margin=dict(t=80, b=40, l=50, r=30),
+        title=dict(text=spec.label, x=0.5, y=0.995),
+        height=min(cell_h * nrows + 120, 3400),
+        width=min(cell_w * ncols + 140, 3400),
+        legend=dict(orientation="h", yanchor="top", y=-0.06, x=0.5, xanchor="center"),
+        margin=dict(t=70, b=90, l=50, r=30),
     )
+    # Extra headroom so per-row column titles (variant, dropout_rate, …) are not clipped.
+    for ann in fig.layout.annotations:
+        if ann.text:
+            ann.update(y=ann.y + 0.015)
     return fig
 
 
@@ -286,7 +292,8 @@ def plot_set2_correlation_plotly(
         template=_plotly_template(),
         height=min(420 * scale, 900),
         width=min(900 * scale, 1600),
-        legend=dict(orientation="h", yanchor="bottom", y=1.08, x=0.5, xanchor="center"),
+        legend=dict(orientation="h", yanchor="top", y=-0.12, x=0.5, xanchor="center"),
+        margin=dict(b=80),
     )
     return fig
 
@@ -351,6 +358,7 @@ def plot_set3_row_plotly(
         template=_plotly_template(),
         height=min(340 * scale * 2 + 60, 2000),
         width=min(280 * scale * ncols + 100, 3200),
-        legend=dict(orientation="h", yanchor="bottom", y=1.04, x=0.5, xanchor="center"),
+        legend=dict(orientation="h", yanchor="top", y=-0.06, x=0.5, xanchor="center"),
+        margin=dict(b=90),
     )
     return fig

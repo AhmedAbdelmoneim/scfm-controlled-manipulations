@@ -120,6 +120,7 @@ def plot_set1_grid(
         figsize=(min(cell_w * ncols, 56), min(cell_h * nrows, 42)),
         squeeze=False,
         sharex=False,
+        gridspec_kw={"hspace": 0.55, "wspace": 0.32},
     )
     palette = model_palette(models)
     sub = layout.data
@@ -145,16 +146,23 @@ def plot_set1_grid(
                 palette=palette,
                 show_xlabel=(ri == nrows - 1),
             )
-            if ri == 0:
-                ax.set_title(_set1_column_title(cell, col_val, column_facet), fontsize=10)
+            col_title = _set1_column_title(cell, col_val, column_facet)
+            if col_title:
+                ax.set_title(col_title, fontsize=10, pad=10)
             if ci == 0:
                 ax.set_ylabel(f"{intervention}\n{spec.y_label}", fontsize=9)
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=min(6, len(labels)), bbox_to_anchor=(0.5, 1.02))
-    fig.suptitle(spec.label, y=1.04, fontsize=12, color=plot_colors()["text"])
-    fig.tight_layout()
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(6, len(labels)),
+            bbox_to_anchor=(0.5, -0.02),
+        )
+    fig.suptitle(spec.label, y=0.995, fontsize=12, color=plot_colors()["text"])
+    fig.subplots_adjust(top=0.92, bottom=0.08)
     return fig
 
 
@@ -236,8 +244,14 @@ def plot_set2_correlation(
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=min(6, len(labels)), bbox_to_anchor=(0.5, 1.02))
-    fig.tight_layout()
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(6, len(labels)),
+            bbox_to_anchor=(0.5, -0.06),
+        )
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     return fig
 
 
@@ -319,6 +333,12 @@ def plot_set3_row(
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=min(6, len(labels)), bbox_to_anchor=(0.5, 1.02))
-    fig.tight_layout()
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(6, len(labels)),
+            bbox_to_anchor=(0.5, -0.02),
+        )
+    fig.tight_layout(rect=(0, 0.04, 1, 0.98))
     return fig
