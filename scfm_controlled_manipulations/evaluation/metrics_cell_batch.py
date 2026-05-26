@@ -1,14 +1,15 @@
-"""Cell-type and batch integration metrics via scIB (ASW, iLISI)."""
+"""Cell-type and batch integration metrics via scib-metrics (ASW, iLISI)."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
+import warnings
 
-import anndata as ad
 import numpy as np
 import pandas as pd
-import scib
+import scib_metrics
+from scib_metrics.nearest_neighbors import NeighborsResults, pynndescent
 
 from scfm_controlled_manipulations.evaluation.data import _as_dense_embedding
 from scfm_controlled_manipulations.evaluation.metrics_common import (
@@ -16,10 +17,19 @@ from scfm_controlled_manipulations.evaluation.metrics_common import (
     scalar_summary,
 )
 
+# scib-metrics 0.5.x: deprecated pandas.value_counts in graph_connectivity (upstream).
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message=r".*value_counts is deprecated.*",
+    module=r"scib_metrics\..*",
+)
+logging.getLogger("jax._src.xla_bridge").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
-EMBED_KEY = "X_eval"
 METRIC_CATEGORY = "cell_type_and_batch_metrics"
+SilhouetteMetric = Literal["euclidean", "cosine"]
 
 
 def _obs_col_present(obs_df: pd.DataFrame, col: str | None) -> bool:
@@ -45,7 +55,7 @@ def log_cell_batch_obs_columns(
         else:
             logger.info(
                 "cell_type_and_batch_metrics: cell_type column %r not in reference obs "
-                "(cell_type_asw skipped)",
+                "(cell_type_asw and graph_connectivity skipped)",
                 cell_type_col,
             )
     if batch_col is not None:
@@ -62,13 +72,40 @@ def log_cell_batch_obs_columns(
             )
 
 
-def _matrix_to_adata(mat: Any, obs_df: pd.DataFrame) -> ad.AnnData:
-    embed = _as_dense_embedding(mat)
-    n_cells = embed.shape[0]
-    adata = ad.AnnData(X=np.zeros((n_cells, 1), dtype=np.float32))
-    adata.obsm[EMBED_KEY] = embed
-    adata.obs = obs_df.copy()
-    return adata
+def _embedding_matrix(mat: Any) -> np.ndarray:
+    return _as_dense_embedding(mat).astype(np.float64, copy=False)
+
+
+def _silhouette_metric(distance_metric: str) -> SilhouetteMetric:
+    if distance_metric == "cosine":
+        return "cosine"
+    if distance_metric != "euclidean":
+        logger.warning(
+            "cell_type_and_batch_metrics: unknown distance_metric %r; using euclidean for ASW",
+            distance_metric,
+        )
+    return "euclidean"
+
+
+def _neighbors_for_knn_metrics(
+    embed: np.ndarray,
+    *,
+    n_neighbors: int,
+    distance_metric: str,
+    seed: int,
+) -> NeighborsResults:
+    """Build a kNN graph for iLISI / graph connectivity (pynndescent; cosine via L2 norm)."""
+    x = embed
+    if distance_metric == "cosine":
+        norms = np.linalg.norm(x, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        x = x / norms
+    elif distance_metric != "euclidean":
+        logger.warning(
+            "cell_type_and_batch_metrics: unknown distance_metric %r; using euclidean for iLISI",
+            distance_metric,
+        )
+    return pynndescent(x, n_neighbors=n_neighbors, random_state=seed, n_jobs=1)
 
 
 def _append_metric_row(
@@ -103,7 +140,7 @@ def _append_metric_row(
     )
 
 
-def _safe_scib_metric(fn: Any, metric_name: str, space_label: str) -> float:
+def _safe_metric(fn: Any, metric_name: str, space_label: str) -> float:
     try:
         return float(fn())
     except Exception as exc:
@@ -116,7 +153,7 @@ def _safe_scib_metric(fn: Any, metric_name: str, space_label: str) -> float:
         return float("nan")
 
 
-def _compute_scib_integration_rows(
+def _compute_integration_rows(
     *,
     mat: Any,
     obs_df: pd.DataFrame,
@@ -137,14 +174,33 @@ def _compute_scib_integration_rows(
     if not has_cell_type and not has_batch:
         return []
 
-    k_meta = max(int(k) for k in k_values) if k_values else 0
-    distance_metric = distance_metrics[0] if distance_metrics else "cosine"
-    adata = _matrix_to_adata(mat, obs_df)
+    k_meta = max(int(k) for k in k_values) if k_values else 15
+    distance_metric = distance_metrics[0] if distance_metrics else "euclidean"
+    embed = _embedding_matrix(mat)
     rows: list[dict[str, Any]] = []
+    neighbors: NeighborsResults | None = None
+
+    def _neighbors() -> NeighborsResults:
+        nonlocal neighbors
+        if neighbors is None:
+            neighbors = _neighbors_for_knn_metrics(
+                embed,
+                n_neighbors=k_meta,
+                distance_metric=distance_metric,
+                seed=seed,
+            )
+        return neighbors
 
     if has_cell_type and cell_type_col is not None:
-        asw = _safe_scib_metric(
-            lambda: scib.metrics.silhouette(adata, label_key=cell_type_col, embed=EMBED_KEY),
+        labels = obs_df[cell_type_col].to_numpy()
+        sil_metric = _silhouette_metric(distance_metric)
+        asw = _safe_metric(
+            lambda: scib_metrics.silhouette_label(
+                embed,
+                labels,
+                rescale=True,
+                metric=sil_metric,
+            ),
             "cell_type_asw",
             space_label,
         )
@@ -162,16 +218,31 @@ def _compute_scib_integration_rows(
             metric_name="cell_type_asw",
             value=asw,
         )
+        nbrs = _neighbors()
+        connectivity = _safe_metric(
+            lambda: scib_metrics.graph_connectivity(nbrs, labels),
+            "graph_connectivity",
+            space_label,
+        )
+        _append_metric_row(
+            rows,
+            dataset_id=dataset_id,
+            model=model,
+            intervention_id=intervention_id,
+            intervention_name=intervention_name,
+            space_label=space_label,
+            seed=seed,
+            n_cells=n_cells,
+            distance_metric=distance_metric,
+            k=k_meta,
+            metric_name="graph_connectivity",
+            value=connectivity,
+        )
 
     if has_batch and batch_col is not None:
-        ilisi = _safe_scib_metric(
-            lambda: scib.metrics.ilisi_graph(
-                adata,
-                batch_key=batch_col,
-                type_="embed",
-                use_rep=EMBED_KEY,
-                n_cores=1,
-            ),
+        batches = obs_df[batch_col].to_numpy()
+        ilisi = _safe_metric(
+            lambda: scib_metrics.ilisi_knn(_neighbors(), batches),
             "batch_ilisi",
             space_label,
         )
@@ -209,7 +280,7 @@ def compute_cell_batch_reference_rows(
 ) -> list[dict[str, Any]]:
     """Metrics for reference embedding (constant across interventions)."""
     logger.info("cell_type_and_batch_metrics: precomputing reference space=%s", space_label)
-    return _compute_scib_integration_rows(
+    return _compute_integration_rows(
         mat=mat,
         obs_df=obs_df,
         space_label=space_label,
@@ -278,7 +349,7 @@ def compute_cell_type_and_batch_metrics(
         n_cells,
     )
     rows.extend(
-        _compute_scib_integration_rows(
+        _compute_integration_rows(
             mat=bundle.emb_man,
             obs_df=obs,
             space_label="embedding_manipulated",

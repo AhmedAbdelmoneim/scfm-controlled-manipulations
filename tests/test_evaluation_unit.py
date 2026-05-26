@@ -91,7 +91,7 @@ class LeidenMpSafetyTest(unittest.TestCase):
         self.assertEqual(mp.get_context("spawn").get_start_method(), "spawn")
 
 
-class ScibCellBatchTest(unittest.TestCase):
+class CellBatchMetricsTest(unittest.TestCase):
     @staticmethod
     def _toy_bundle(n: int = 80) -> Any:
         from types import SimpleNamespace
@@ -122,8 +122,9 @@ class ScibCellBatchTest(unittest.TestCase):
         )
 
         with (
-            mock.patch.object(mcb.scib.metrics, "silhouette", return_value=0.4),
-            mock.patch.object(mcb.scib.metrics, "ilisi_graph", return_value=0.6),
+            mock.patch.object(mcb.scib_metrics, "silhouette_label", return_value=0.4),
+            mock.patch.object(mcb.scib_metrics, "graph_connectivity", return_value=0.5),
+            mock.patch.object(mcb.scib_metrics, "ilisi_knn", return_value=0.6),
         ):
             bundle = self._toy_bundle()
             df = compute_cell_type_and_batch_metrics(
@@ -140,7 +141,7 @@ class ScibCellBatchTest(unittest.TestCase):
             )
             manip = df[df["space"] == "embedding_manipulated"]
             names = set(manip["metric_name"])
-            self.assertEqual(names, {"cell_type_asw", "batch_ilisi"})
+            self.assertEqual(names, {"cell_type_asw", "graph_connectivity", "batch_ilisi"})
             for _, row in manip.iterrows():
                 self.assertFalse(np.isnan(row["value_mean"]))
 
@@ -152,7 +153,7 @@ class ScibCellBatchTest(unittest.TestCase):
             compute_cell_type_and_batch_metrics,
         )
 
-        with mock.patch.object(mcb.scib.metrics, "silhouette", return_value=0.4):
+        with mock.patch.object(mcb.scib_metrics, "silhouette_label", return_value=0.4):
             bundle = self._toy_bundle()
             df = compute_cell_type_and_batch_metrics(
                 bundle=bundle,
@@ -167,7 +168,7 @@ class ScibCellBatchTest(unittest.TestCase):
                 distance_metrics=["euclidean"],
             )
             manip = df[df["space"] == "embedding_manipulated"]
-            self.assertEqual(set(manip["metric_name"]), {"cell_type_asw"})
+            self.assertEqual(set(manip["metric_name"]), {"cell_type_asw", "graph_connectivity"})
 
     def test_skips_cell_type_metrics_without_cell_type_col(self) -> None:
         from unittest import mock
@@ -177,7 +178,7 @@ class ScibCellBatchTest(unittest.TestCase):
             compute_cell_type_and_batch_metrics,
         )
 
-        with mock.patch.object(mcb.scib.metrics, "ilisi_graph", return_value=0.6):
+        with mock.patch.object(mcb.scib_metrics, "ilisi_knn", return_value=0.6):
             bundle = self._toy_bundle()
             df = compute_cell_type_and_batch_metrics(
                 bundle=bundle,
@@ -204,8 +205,9 @@ class ScibCellBatchTest(unittest.TestCase):
         )
 
         with (
-            mock.patch.object(mcb.scib.metrics, "silhouette", return_value=0.4),
-            mock.patch.object(mcb.scib.metrics, "ilisi_graph", return_value=0.6),
+            mock.patch.object(mcb.scib_metrics, "silhouette_label", return_value=0.4),
+            mock.patch.object(mcb.scib_metrics, "graph_connectivity", return_value=0.5),
+            mock.patch.object(mcb.scib_metrics, "ilisi_knn", return_value=0.6),
         ):
             bundle = self._toy_bundle(n=60)
             template = compute_cell_batch_reference_rows(
@@ -236,7 +238,33 @@ class ScibCellBatchTest(unittest.TestCase):
             )
             ref = df[df["space"] == "embedding_reference"]
             self.assertTrue((ref["intervention_id"] == "i1").all())
-            self.assertGreaterEqual(len(ref), 2)
+            self.assertGreaterEqual(len(ref), 3)
+
+    def test_scib_metrics_returns_finite_values(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_type_and_batch_metrics,
+        )
+
+        bundle = self._toy_bundle(n=120)
+        df = compute_cell_type_and_batch_metrics(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+            cell_type_col="cell_type",
+            batch_col="batch",
+            k_values=[15],
+            distance_metrics=["euclidean"],
+        )
+        manip = df[df["space"] == "embedding_manipulated"]
+        self.assertEqual(
+            set(manip["metric_name"]),
+            {"cell_type_asw", "graph_connectivity", "batch_ilisi"},
+        )
+        for _, row in manip.iterrows():
+            self.assertTrue(np.isfinite(row["value_mean"]))
 
 
 class KnnOverlapTest(unittest.TestCase):

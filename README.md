@@ -96,10 +96,11 @@ Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 | | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
 | | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
 | `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
-| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette (scIB; requires `cell_type_col`) |
-| | | `batch_ilisi` | Batch iLISI — local batch mixing (scIB; requires `batch_col`) |
+| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette ([scib-metrics](https://scib-metrics.readthedocs.io/); requires `cell_type_col`) |
+| | | `graph_connectivity` | Per–cell-type kNN subgraph connectivity (scib-metrics; requires `cell_type_col`) |
+| | | `batch_ilisi` | Batch iLISI — local batch mixing (scib-metrics; requires `batch_col`) |
 
-iLISI recomputes a kNN graph on the evaluation embedding via scanpy.
+iLISI builds a kNN graph with [scib-metrics](https://scib-metrics.readthedocs.io/) (`pynndescent`; cosine uses L2-normalized embeddings).
 
 Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
 `knn_alpha`, `knn_bandwidth_k`, `knn_n_null_permutations`, `leiden_resolutions`,

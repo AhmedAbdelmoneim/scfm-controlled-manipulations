@@ -199,7 +199,7 @@ def prepare_set2_correlation(
     spec: DashboardMetric,
     models: list[str],
 ) -> pd.DataFrame:
-    """Wide table: cell_type_asw, batch_ilisi, selected metric mean per run."""
+    """Wide table: cell_type_asw, graph_connectivity, batch_ilisi, selected metric mean per run."""
     metric_sub = filter_for_dashboard_metric(metrics_df, spec, models)
     metric_sub = metric_sub[~metric_sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
     if spec.x_col == "resolution":
@@ -241,9 +241,10 @@ def prepare_set2_correlation(
         )
 
     cell = _pivot_score("cell_type_asw", "cell_type_score")
+    connectivity = _pivot_score("graph_connectivity", "graph_connectivity_score")
     batch = _pivot_score("batch_ilisi", "batch_score")
     wide = metric_wide
-    for extra in (cell, batch):
+    for extra in (cell, connectivity, batch):
         if not extra.empty:
             wide = wide.merge(extra, on=keys, how="left")
     return wide

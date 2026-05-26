@@ -18,10 +18,6 @@ import numpy as np
 import pandas as pd
 
 from scfm_controlled_manipulations.evaluation.context import load_dataset_context
-from scfm_controlled_manipulations.obs_columns import (
-    resolve_batch_column,
-    resolve_cell_type_column,
-)
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import log_cell_batch_obs_columns
 from scfm_controlled_manipulations.evaluation.metrics_common import VALUE_SUMMARY_COLUMNS
 from scfm_controlled_manipulations.evaluation.worker import (
@@ -39,6 +35,10 @@ from scfm_controlled_manipulations.io import (
     evaluation_metrics_csv_path,
     intervention_id,
     manipulation_path,
+)
+from scfm_controlled_manipulations.obs_columns import (
+    resolve_batch_column,
+    resolve_cell_type_column,
 )
 from scfm_controlled_manipulations.sweep_config import (
     expand_intervention_specs,
@@ -340,7 +340,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         )
     elif cell_type_col_config and cell_type_col is None:
         logger.warning(
-            "cell_type_col %r not found in reference obs (tried aliases); cell_type_asw skipped",
+            "cell_type_col %r not found in reference obs (tried aliases); "
+            "cell_type_asw and graph_connectivity skipped",
             cell_type_col_config,
         )
     if batch_col_config and batch_col != batch_col_config:

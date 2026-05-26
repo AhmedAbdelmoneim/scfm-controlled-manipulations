@@ -965,7 +965,7 @@ def _(mo):
     mo.md(r"""
     ### Cell type and batch metrics
 
-    `batch_ilisi` (scIB iLISI) — currently all null for this dataset (likely missing `batch` in obs).
+    `cell_type_asw`, `graph_connectivity`, and `batch_ilisi` via [scib-metrics](https://scib-metrics.readthedocs.io/). NaN rows usually mean missing `obs` columns or a failed metric (see eval logs).
     """)
     return
 
@@ -977,8 +977,8 @@ def _(metrics_df, mo):
     mo.vstack(
         [
             mo.callout(
-                f"All {_n_null} / {len(_batch)} `batch_ilisi` rows have null `value_mean`. "
-                "No comparison plots until batch labels exist in the dataset obs.",
+                f"{_n_null} / {len(_batch)} cell_type/batch metric rows have null `value_mean`. "
+                "Check `evaluation.cell_type_col` / `batch_col`, reference `obs`, and eval logs; re-run `make evaluate` after fixes.",
                 kind="warn",
             ),
             _batch[
@@ -986,6 +986,92 @@ def _(metrics_df, mo):
             ].drop_duplicates(),
         ]
     )
+
+    _batch
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Diagnose lower nulls
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+ 
+    """)
+    return
+
+
+@app.cell
+def _(clustering_df):
+    # filter to intervention_name is gene_dropout and param_value is 0.2
+
+    subs = clustering_df[
+        (clustering_df["intervention_name"] == "gene_dropout") &
+        (clustering_df["param_value"] == 0.2)
+    ]
+    return (subs,)
+
+
+@app.cell
+def _(subs):
+    subs
+    return
+
+
+@app.cell
+def _(plt, sns, subs):
+    def plot_di(subs):
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        sns.barplot(
+            data=subs,
+            x="model",
+            y="n_ref_clusters",
+            ax=axes[0]
+        )
+        axes[0].set_title("Number of Reference Clusters")
+        axes[0].set_xlabel("Model")
+        axes[0].set_ylabel("n_ref_clusters")
+
+        sns.barplot(
+            data=subs,
+            x="model",
+            y="n_manip_clusters",
+            ax=axes[1]
+        )
+        axes[1].set_title("Number of Manipulated Clusters")
+        axes[1].set_xlabel("Model")
+        axes[1].set_ylabel("n_manip_clusters")
+
+        plt.tight_layout()
+        plt.show()
+
+    plot_di(subs)
+    return
+
+
+@app.cell
+def _(embedding_shift_df):
+    embedding_shift_df
+    return
+
+
+@app.cell
+def _(embedding_shift_df):
+    embedding_shift_subs = embedding_shift_df[
+        (embedding_shift_df["model"].isin(["geneformer", "pca", "scimilarity"])) &
+        (embedding_shift_df["intervention_name"] == "gene_dropout") &
+        (embedding_shift_df["metric_name"].isin(["within_ref_pairwise_l2", "within_man_pairwise_l2"])) &
+        (embedding_shift_df["space"] == "embedding") &
+        (embedding_shift_df["param_value"] == 0.2)
+    ]
+    embedding_shift_subs
     return
 
 
