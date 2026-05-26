@@ -104,7 +104,7 @@ try:
                 layout1, spec, controls.models, scale=DEFAULT_PLOT_SCALE
             )
             log.info("set1 figure built in %.2fs", time.perf_counter() - t0)
-            show_figure(fig1, key="set1")
+            show_figure(fig1)
 
     st.subheader("Set 2 — Integration vs metric score")
     with st.spinner("Building Set 2 plot…"):
@@ -134,7 +134,7 @@ try:
                 scale=DEFAULT_PLOT_SCALE,
             )
             log.info("set2 figure built in %.2fs", time.perf_counter() - t0)
-            show_figure(fig2, key="set2")
+            show_figure(fig2)
 
     st.subheader("Set 3 — Embedding collapse and shift")
     with st.spinner("Building Set 3 plot…"):
@@ -156,7 +156,7 @@ try:
                 scale=DEFAULT_PLOT_SCALE,
             )
             log.info("set3 figure built in %.2fs", time.perf_counter() - t0)
-            show_figure(fig3, key="set3")
+            show_figure(fig3)
 
     log.info("Metrics page render complete")
 

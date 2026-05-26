@@ -40,7 +40,7 @@ for extra in ("cell_type_column", "batch_column", "cell_type_column_configured")
         cols.append(extra)
 if "error" in df.columns:
     cols.append("error")
-st.dataframe(df[[c for c in cols if c in df.columns]], use_container_width=True, hide_index=True)
+st.dataframe(df[[c for c in cols if c in df.columns]], width="stretch", hide_index=True)
 
 with st.expander("Field definitions"):
     st.markdown(
@@ -65,6 +65,6 @@ st.dataframe(
             for s in catalog_table(root)
         ]
     ),
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
 )
