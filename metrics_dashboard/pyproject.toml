@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Streamlit dashboard for SCEval evaluation metrics"
 requires-python = "~=3.11.0"
 dependencies = [
-    "matplotlib",
     "numpy",
     "pandas",
     "pyarrow",

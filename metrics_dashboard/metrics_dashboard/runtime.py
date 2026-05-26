@@ -7,7 +7,7 @@ import platform
 import sys
 from pathlib import Path
 
-from metrics_dashboard.config import BUNDLE_ROOT, bundle_root
+from metrics_dashboard.config import bundle_root
 
 log = logging.getLogger("scfm_dashboard.runtime")
 
@@ -26,29 +26,3 @@ def log_startup_context() -> None:
     if root.is_dir() and not datasets:
         log.warning("bundle_root exists but no */metrics.parquet found")
         log.info("bundle_root children=%s", [p.name for p in root.iterdir()])
-
-
-def bundle_diagnostics() -> dict:
-    root = bundle_root()
-    out: dict = {
-        "bundle_root": str(root),
-        "bundle_root_exists": root.is_dir(),
-        "cwd": str(Path.cwd()),
-    }
-    if not root.is_dir():
-        out["error"] = "data/dashboard_bundles not found — commit bundles to repo root"
-        return out
-    datasets = []
-    for p in sorted(root.iterdir()):
-        if not p.is_dir() or p.name.startswith("."):
-            continue
-        pq = p / "metrics.parquet"
-        datasets.append(
-            {
-                "dataset": p.name,
-                "metrics_parquet": pq.is_file(),
-                "size_mb": round(pq.stat().st_size / 1e6, 2) if pq.is_file() else None,
-            }
-        )
-    out["datasets"] = datasets
-    return out

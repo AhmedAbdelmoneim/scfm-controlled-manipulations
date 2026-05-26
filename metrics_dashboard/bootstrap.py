@@ -1,15 +1,10 @@
-"""App startup: logging, headless matplotlib, and import path for Streamlit Cloud."""
+"""App startup: logging and import path for Streamlit Cloud."""
 
 from __future__ import annotations
 
 import logging
 import sys
 from pathlib import Path
-
-# Headless backend must be set before any other module imports pyplot.
-import matplotlib
-
-matplotlib.use("Agg")
 
 logging.basicConfig(
     level=logging.INFO,

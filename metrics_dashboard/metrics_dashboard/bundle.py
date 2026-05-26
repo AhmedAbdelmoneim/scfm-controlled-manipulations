@@ -75,10 +75,6 @@ def resolve_dataset_dirs(source: Path) -> list[tuple[str, Path]]:
     return out
 
 
-def discover_datasets_at_root(root: Path) -> list[str]:
-    return [ds_id for ds_id, _ in resolve_dataset_dirs(root)]
-
-
 def extract_intervention_params(
     manip_dir: Path,
     intervention_ids: list[str],
@@ -308,23 +304,3 @@ def export_dataset_bundle(
     (out_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2) + "\n")
 
     return out_dir
-
-
-def export_all_bundles(
-    source: Path,
-    output_root: Path,
-    *,
-    compression: str = "zstd",
-) -> list[Path]:
-    written: list[Path] = []
-    for dataset_id, dataset_root in resolve_dataset_dirs(source):
-        if is_bundle_dataset_dir(dataset_root) and not is_legacy_dataset_dir(dataset_root):
-            continue
-        if not is_legacy_dataset_dir(dataset_root):
-            continue
-        written.append(
-            export_dataset_bundle(
-                dataset_id, dataset_root, output_root, compression=compression
-            )
-        )
-    return written

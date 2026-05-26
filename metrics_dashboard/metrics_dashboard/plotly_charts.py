@@ -15,7 +15,7 @@ from metrics_dashboard.config import (
     SET3_SHIFT_YLABEL,
     model_palette,
 )
-from metrics_dashboard.plots import _prepend_reference_points, _set1_column_title
+from metrics_dashboard.plot_helpers import prepend_reference_points, set1_column_title
 from metrics_dashboard.style import streamlit_is_dark
 from metrics_dashboard.sweep_axis import sweep_x_positions
 from metrics_dashboard.transforms import Set1GridLayout, sort_models, std_bounds
@@ -171,7 +171,7 @@ def plot_set1_grid_plotly(
                 cell = layout.data[layout.data["intervention_name"] == intervention]
                 if col_val != "all":
                     cell = cell[cell[column_facet].astype(str) == str(col_val)]
-                subplot_titles.append(_set1_column_title(cell, col_val, layout.column_facet))
+                subplot_titles.append(set1_column_title(cell, col_val, layout.column_facet))
             else:
                 subplot_titles.append("")
     row_gap = min(0.06 + 0.025 * scale, 0.14)
@@ -359,7 +359,7 @@ def plot_set3_row_plotly(
             start=1,
         ):
             cell = df[df["intervention_name"] == intervention]
-            cell = _prepend_reference_points(cell, ref_df, models)
+            cell = prepend_reference_points(cell, ref_df, models)
             _add_sweep_traces(
                 fig,
                 cell,
