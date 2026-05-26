@@ -199,27 +199,18 @@ def _correlation_annotation(ax: plt.Axes, x: np.ndarray, y: np.ndarray) -> None:
 def plot_set2_correlation(
     wide: pd.DataFrame,
     *,
-    y_col: str,
-    y_label: str,
     x_label: str,
     connect_by_intervention: bool = True,
     models: list[str],
     scale: float = 1.0,
 ) -> Figure:
     configure_matplotlib()
-    fig, axes = plt.subplots(1, 2, figsize=(min(12 * scale, 24), min(5 * scale, 12)))
+    fig, axes = plt.subplots(1, 3, figsize=(min(16 * scale, 30), min(5 * scale, 12)))
     palette = model_palette(models)
-    pairs = [
-        ("metric_score", y_col, f"{x_label} vs {y_label}"),
-    ]
-    if y_col == "cell_type_score":
-        pairs = [("metric_score", "cell_type_score", f"{x_label} vs cell-type ASW")]
-    if y_col == "batch_score":
-        pairs = [("metric_score", "batch_score", f"{x_label} vs batch iLISI")]
-
     plot_specs = [
-        ("metric_score", "cell_type_score", "Cell-type ASW"),
-        ("metric_score", "batch_score", "Batch iLISI"),
+        ("metric_score", "cell_type_score", f"{x_label} vs cell-type ASW"),
+        ("metric_score", "graph_connectivity_score", f"{x_label} vs graph connectivity"),
+        ("metric_score", "batch_score", f"{x_label} vs batch iLISI"),
     ]
     for ax, (xc, yc, title) in zip(axes, plot_specs, strict=True):
         if xc not in wide.columns or yc not in wide.columns:

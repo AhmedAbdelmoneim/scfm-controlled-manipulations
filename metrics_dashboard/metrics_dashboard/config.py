@@ -166,8 +166,9 @@ PLOT_SET_DESCRIPTIONS = {
         "Bands = mean ± 1 std across cells; dashed = permutation null mean."
     ),
     "set2": (
-        "Integration vs structure: each point is one run. Lines connect points within "
-        "the same manipulation. Correlation and p-value are Pearson on displayed points."
+        "Integration vs structure: each point is one run (cell-type ASW, graph connectivity, "
+        "batch iLISI). Lines connect points within the same manipulation. Correlation and "
+        "p-value are Pearson on displayed points."
     ),
     "set3": (
         "Columns = manipulation; x-axis = sweep level (numeric fraction/rate/k or shuffle "

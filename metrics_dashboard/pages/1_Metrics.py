@@ -130,6 +130,14 @@ try:
                     "cell-type column in reference `obs`, e.g. `cell_type` vs `celltype`). "
                     "Re-run `make evaluate` after fixing `evaluation.cell_type_col`, then re-export."
                 )
+            if (
+                "graph_connectivity_score" not in wide.columns
+                or wide["graph_connectivity_score"].notna().sum() == 0
+            ):
+                st.warning(
+                    "Graph connectivity is missing from this bundle (requires `cell_type_col` "
+                    "and a recent `make evaluate`). Re-export the dashboard bundle after re-evaluating."
+                )
             if controls.interactive_plots:
                 fig2 = plot_set2_correlation_plotly(
                     wide, x_label=spec.label, models=controls.models, scale=controls.plot_scale
@@ -137,8 +145,6 @@ try:
             else:
                 fig2 = plot_set2_correlation(
                     wide,
-                    y_col="cell_type_score",
-                    y_label="Cell-type ASW",
                     x_label=spec.label,
                     models=controls.models,
                     scale=controls.plot_scale,

@@ -242,9 +242,14 @@ def plot_set2_correlation_plotly(
     scale: float = 1.0,
 ) -> go.Figure:
     palette = model_palette(models)
-    fig = make_subplots(rows=1, cols=2, subplot_titles=["Cell-type ASW", "Batch iLISI"])
+    fig = make_subplots(
+        rows=1,
+        cols=3,
+        subplot_titles=["Cell-type ASW", "Graph connectivity", "Batch iLISI"],
+    )
     pairs = [
         ("metric_score", "cell_type_score"),
+        ("metric_score", "graph_connectivity_score"),
         ("metric_score", "batch_score"),
     ]
     legend_shown = False
@@ -309,7 +314,7 @@ def plot_set2_correlation_plotly(
     fig.update_layout(
         template=_plotly_template(),
         height=min(420 * scale, 900),
-        width=min(900 * scale, 1600),
+        width=min(1200 * scale, 2100),
         legend=dict(orientation="h", yanchor="top", y=-0.12, x=0.5, xanchor="center"),
         margin=dict(b=80),
     )
