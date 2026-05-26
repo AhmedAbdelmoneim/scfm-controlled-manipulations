@@ -75,9 +75,9 @@ Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
 **Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
 append embedding-minus-raw differences for all summary columns except `value_std` (left `NaN`).
 
-**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, `diffusion_js`, and
-`classifier_roc_auc_ovr_macro_cv_mean` include broken-pairing nulls in `null_value` (mean over
-cells; optional multi-shuffle average via `knn_n_null_permutations`). Diffusion uses a PHATE-style
+**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, and `diffusion_js` include broken-pairing
+nulls in `null_value` (mean over cells; optional multi-shuffle average via `knn_n_null_permutations`).
+Diffusion uses a PHATE-style
 alpha-decay kNN kernel (`knn_alpha`, default 10); set `knn_alpha: 2` for a Gaussian-like kernel.
 Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 
@@ -96,10 +96,11 @@ Clear `results/evaluation_cache/` after changing diffusion kernel settings.
 | | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
 | | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
 | `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
-| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette (scIB; requires `cell_type_col`) |
-| | | `batch_ilisi` | Batch iLISI — local batch mixing (scIB; requires `batch_col`) |
+| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette ([scib-metrics](https://scib-metrics.readthedocs.io/); requires `cell_type_col`) |
+| | | `graph_connectivity` | Per–cell-type kNN subgraph connectivity (scib-metrics; requires `cell_type_col`) |
+| | | `batch_ilisi` | Batch iLISI — local batch mixing (scib-metrics; requires `batch_col`) |
 
-iLISI recomputes a kNN graph on the evaluation embedding via scanpy.
+iLISI builds a kNN graph with [scib-metrics](https://scib-metrics.readthedocs.io/) (`pynndescent`; cosine uses L2-normalized embeddings).
 
 Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
 `knn_alpha`, `knn_bandwidth_k`, `knn_n_null_permutations`, `leiden_resolutions`,

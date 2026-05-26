@@ -77,12 +77,24 @@ benchmark-eval:
 ## Run unit tests
 .PHONY: test
 test:
-	uv run python -m unittest discover -s tests -v
+	PYTHONPATH=metrics_dashboard uv run python -m unittest discover -s tests -v
 
 ## Fast synthetic smoke-run for evaluate pipeline
 .PHONY: smoke-eval
 smoke-eval:
 	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml --n-cells 200 --n-genes 400 --emb-dim 32 --max-interventions 1
+
+## Export minimal Parquet dashboard bundles from SCEval dataset tree(s)
+.PHONY: export-dashboard-bundle
+export-dashboard-bundle:
+	@test -n "$(SOURCE)" || (echo "Usage: make export-dashboard-bundle SOURCE=/path/to/sceval[/dataset] [OUTPUT=data/dashboard_bundles]" && exit 1)
+	PYTHONPATH=metrics_dashboard uv run python scripts/export_dashboard_bundle.py \
+		--source "$(SOURCE)" --output "$(or $(OUTPUT),$(CURDIR)/data/dashboard_bundles)"
+
+## Streamlit metrics dashboard (metrics_dashboard/)
+.PHONY: dashboard
+dashboard:
+	uv run --directory metrics_dashboard streamlit run Home.py
 
 
 

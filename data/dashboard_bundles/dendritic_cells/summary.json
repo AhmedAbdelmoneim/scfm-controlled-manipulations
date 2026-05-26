@@ -1,0 +1,10 @@
+{
+  "dataset_id": "dendritic_cells",
+  "n_cells": 569,
+  "n_genes": 15154,
+  "n_cell_types": 4,
+  "n_batches": 2,
+  "cell_type_column": "celltype",
+  "batch_column": "batch",
+  "cell_type_column_configured": "cell_type"
+}

@@ -34,6 +34,9 @@ def thread_limit_environ(*, threads_per_process: int = 1) -> dict[str, str]:
     values["OPENBLAS_DYNAMIC_ARCH"] = "FALSE"
     values["OPENBLAS_NO_AFFINITY"] = "1"
     values["GOTO_NUM_THREADS"] = count
+    # scib-metrics pulls JAX; default to CPU so workers do not probe missing TPU/GPU libs.
+    if "JAX_PLATFORMS" not in os.environ:
+        values["JAX_PLATFORMS"] = "cpu"
     return values
 
 

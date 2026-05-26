@@ -34,7 +34,7 @@ dependencies = [
     "pyyaml",
     "ruff",
     "scanpy",
-    "scib",
+    "scib-metrics",
     "scikit-learn",
     "scikit-misc>=0.5.2",
 ]

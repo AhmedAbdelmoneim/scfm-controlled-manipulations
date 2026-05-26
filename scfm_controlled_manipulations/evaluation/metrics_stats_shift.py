@@ -295,6 +295,7 @@ def compute_embedding_shift(
             n_cells=n,
             seed=seed,
         )
+
         rows.append(
             make_metric_row(
                 dataset_id=base["dataset_id"],
