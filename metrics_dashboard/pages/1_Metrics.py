@@ -21,9 +21,12 @@ from metrics_dashboard.config import (
 from metrics_dashboard.filters import render_sidebar_controls
 from metrics_dashboard.load import load_multi_dataset_metrics
 from metrics_dashboard.plot_display import show_figure
-from metrics_dashboard.plots import plot_set1_grid, plot_set2_correlation, plot_set3_row
+from metrics_dashboard.plotly_charts import (
+    plot_set1_grid_plotly,
+    plot_set2_correlation_plotly,
+    plot_set3_row_plotly,
+)
 from metrics_dashboard.runtime import log_startup_context
-from metrics_dashboard.style import configure_matplotlib
 from metrics_dashboard.transforms import (
     average_metrics_across_datasets,
     prepare_set1_grid,
@@ -33,7 +36,6 @@ from metrics_dashboard.transforms import (
 
 log = logging.getLogger("scfm_dashboard.metrics_page")
 log_startup_context()
-configure_matplotlib()
 
 try:
     root = bundle_root()
@@ -100,7 +102,7 @@ try:
                 f"Set 1: **{len(layout1.row_labels)}** manipulations × config columns "
                 f"(up to **{ncol}** per row) · x-axis = **{layout1.x_col}**{k_note}."
             )
-            fig1 = plot_set1_grid(
+            fig1 = plot_set1_grid_plotly(
                 layout1, spec, controls.models, scale=DEFAULT_PLOT_SCALE
             )
             log.info("set1 figure built in %.2fs", time.perf_counter() - t0)
@@ -127,7 +129,7 @@ try:
                     "Graph connectivity is missing from this bundle (requires `cell_type_col` "
                     "and a recent `make evaluate`). Re-export the dashboard bundle after re-evaluating."
                 )
-            fig2 = plot_set2_correlation(
+            fig2 = plot_set2_correlation_plotly(
                 wide,
                 x_label=spec.label,
                 models=controls.models,
@@ -148,7 +150,7 @@ try:
         if not manipulations:
             st.info("No embedding shift data for selected models.")
         else:
-            fig3 = plot_set3_row(
+            fig3 = plot_set3_row_plotly(
                 collapse_df,
                 shift_df,
                 manipulations,
