@@ -1,7 +1,7 @@
 {
   "dataset_id": "dendritic_cells",
   "source_dir": "/vault/amoneim/scfm-controlled-manipulations/processed/sceval/dendritic_cells",
-  "exported_at": "2026-05-24T17:29:22.477829+00:00",
+  "exported_at": "2026-05-26T19:57:51.901321+00:00",
   "models": [
     "geneformer",
     "pca",
@@ -10,15 +10,15 @@
     "scgpt",
     "scimilarity"
   ],
-  "n_rows": 11550,
+  "n_rows": 12150,
   "metrics_file": "metrics.parquet",
   "compression": "zstd",
   "source_files_mtime_ns": {
-    "geneformer_metrics.csv": 1779463514246469997,
-    "pca_metrics.csv": 1779462872763645978,
-    "scconcept_metrics.csv": 1779464563324889425,
-    "scfoundation_metrics.csv": 1779463805677478643,
-    "scgpt_metrics.csv": 1779463192352042122,
-    "scimilarity_metrics.csv": 1779464214617097854
+    "geneformer_metrics.csv": 1779824584753104332,
+    "pca_metrics.csv": 1779824424615921143,
+    "scconcept_metrics.csv": 1779824837044543875,
+    "scfoundation_metrics.csv": 1779824675294338703,
+    "scgpt_metrics.csv": 1779824504358008286,
+    "scimilarity_metrics.csv": 1779824755198428046
   }
 }
