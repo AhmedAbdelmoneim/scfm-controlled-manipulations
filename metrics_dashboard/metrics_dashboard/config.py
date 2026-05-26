@@ -157,6 +157,9 @@ DASHBOARD_METRICS: dict[str, DashboardMetric] = {
 
 DASHBOARD_METRIC_KEYS = list(DASHBOARD_METRICS.keys())
 
+# Fixed subplot scale (formerly a sidebar slider).
+DEFAULT_PLOT_SCALE = 1.25
+
 PLOT_SET_DESCRIPTIONS = {
     "set1": (
         "Grid layout: **rows** = manipulation type; **columns** = manipulation config "

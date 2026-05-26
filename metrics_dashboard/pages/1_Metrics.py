@@ -13,6 +13,7 @@ import streamlit as st
 from metrics_dashboard.catalog import discover_datasets
 from metrics_dashboard.config import (
     DASHBOARD_METRICS,
+    DEFAULT_PLOT_SCALE,
     MANIPULATION_ORDER,
     PLOT_SET_DESCRIPTIONS,
     bundle_root,
@@ -20,11 +21,6 @@ from metrics_dashboard.config import (
 from metrics_dashboard.filters import render_sidebar_controls
 from metrics_dashboard.load import load_multi_dataset_metrics
 from metrics_dashboard.plot_display import show_figure
-from metrics_dashboard.plotly_charts import (
-    plot_set1_grid_plotly,
-    plot_set2_correlation_plotly,
-    plot_set3_row_plotly,
-)
 from metrics_dashboard.plots import plot_set1_grid, plot_set2_correlation, plot_set3_row
 from metrics_dashboard.runtime import log_startup_context
 from metrics_dashboard.style import configure_matplotlib
@@ -100,22 +96,15 @@ try:
                 k_vals = sorted(layout1.data["k"].dropna().unique())
                 if len(k_vals) == 1:
                     k_note = f" · k = {int(k_vals[0]) if k_vals[0] == int(k_vals[0]) else k_vals[0]}"
-            mode = "interactive" if controls.interactive_plots else "static"
             st.caption(
                 f"Set 1: **{len(layout1.row_labels)}** manipulations × config columns "
-                f"(up to **{ncol}** per row) · x-axis = **{layout1.x_col}**{k_note}. "
-                f"({mode}; use sidebar to adjust size or disable interactivity.)"
+                f"(up to **{ncol}** per row) · x-axis = **{layout1.x_col}**{k_note}."
             )
-            if controls.interactive_plots:
-                fig1 = plot_set1_grid_plotly(
-                    layout1, spec, controls.models, scale=controls.plot_scale
-                )
-            else:
-                fig1 = plot_set1_grid(
-                    layout1, spec, controls.models, scale=controls.plot_scale
-                )
+            fig1 = plot_set1_grid(
+                layout1, spec, controls.models, scale=DEFAULT_PLOT_SCALE
+            )
             log.info("set1 figure built in %.2fs", time.perf_counter() - t0)
-            show_figure(fig1, interactive=controls.interactive_plots, key="set1")
+            show_figure(fig1, key="set1")
 
     st.subheader("Set 2 — Integration vs metric score")
     with st.spinner("Building Set 2 plot…"):
@@ -138,19 +127,14 @@ try:
                     "Graph connectivity is missing from this bundle (requires `cell_type_col` "
                     "and a recent `make evaluate`). Re-export the dashboard bundle after re-evaluating."
                 )
-            if controls.interactive_plots:
-                fig2 = plot_set2_correlation_plotly(
-                    wide, x_label=spec.label, models=controls.models, scale=controls.plot_scale
-                )
-            else:
-                fig2 = plot_set2_correlation(
-                    wide,
-                    x_label=spec.label,
-                    models=controls.models,
-                    scale=controls.plot_scale,
-                )
+            fig2 = plot_set2_correlation(
+                wide,
+                x_label=spec.label,
+                models=controls.models,
+                scale=DEFAULT_PLOT_SCALE,
+            )
             log.info("set2 figure built in %.2fs", time.perf_counter() - t0)
-            show_figure(fig2, interactive=controls.interactive_plots, key="set2")
+            show_figure(fig2, key="set2")
 
     st.subheader("Set 3 — Embedding collapse and shift")
     with st.spinner("Building Set 3 plot…"):
@@ -164,24 +148,15 @@ try:
         if not manipulations:
             st.info("No embedding shift data for selected models.")
         else:
-            if controls.interactive_plots:
-                fig3 = plot_set3_row_plotly(
-                    collapse_df,
-                    shift_df,
-                    manipulations,
-                    controls.models,
-                    scale=controls.plot_scale,
-                )
-            else:
-                fig3 = plot_set3_row(
-                    collapse_df,
-                    shift_df,
-                    manipulations,
-                    controls.models,
-                    scale=controls.plot_scale,
-                )
+            fig3 = plot_set3_row(
+                collapse_df,
+                shift_df,
+                manipulations,
+                controls.models,
+                scale=DEFAULT_PLOT_SCALE,
+            )
             log.info("set3 figure built in %.2fs", time.perf_counter() - t0)
-            show_figure(fig3, interactive=controls.interactive_plots, key="set3")
+            show_figure(fig3, key="set3")
 
     log.info("Metrics page render complete")
 
