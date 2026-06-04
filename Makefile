@@ -74,6 +74,15 @@ evaluate:
 benchmark-eval:
 	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml
 
+## Validate manipulation h5ads for embedding (raw counts in X, gene/Ensembl metadata)
+.PHONY: validate-embed-inputs
+validate-embed-inputs:
+	uv run python scripts/validate_embed_inputs.py \
+		--dir "$(or $(MANIPULATIONS_DIR),$(CURDIR)/results/manipulations)" \
+		$(if $(CONFIG),--config $(CONFIG),) \
+		$(if $(FM_REPO),--fm-repo $(FM_REPO),) \
+		$(foreach spec,$(GENE_LIST),--gene-list $(spec))
+
 ## Run unit tests
 .PHONY: test
 test:
