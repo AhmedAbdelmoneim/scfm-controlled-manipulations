@@ -101,7 +101,7 @@ def filter_for_dashboard_metric(
         & (metrics_df["model"].astype(str).isin(models))
     ].copy()
     pin_k = True
-    if not pin_hyperparameters and spec.metric_name == "knn_recall":
+    if not pin_hyperparameters and spec.metric_name in {"knn_recall", "trustworthiness"}:
         pin_k = False
     if pin_k and spec.default_k is not None and "k" in sub.columns:
         k_vals = sub["k"].dropna().unique()
@@ -142,7 +142,7 @@ def _set1_x_col(spec: DashboardMetric, sub: pd.DataFrame) -> str:
     ):
         return "diffusion_t"
     if (
-        spec.metric_name == "knn_recall"
+        spec.metric_name in {"knn_recall", "trustworthiness"}
         and "k" in sub.columns
         and sub["k"].notna().any()
     ):

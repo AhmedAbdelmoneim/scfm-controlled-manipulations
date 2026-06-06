@@ -45,6 +45,7 @@ models: [pca, scgpt, geneformer, scfoundation, scimilarity, scconcept]
 # Structure evaluation (``make evaluate``): paired raw + embedding vs reference per manipulation.
 evaluation:
   k_values: [5, 15, 50]
+  trustworthiness_k_values: [5, 15, 30, 50, 100]
   distance_metrics: [euclidean]
   diffusion_t_values: [1, 2, 4, 8, 16, 32]
   leiden_resolutions: [0.25, 0.5, 1.0, 2.0]

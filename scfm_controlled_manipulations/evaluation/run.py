@@ -38,7 +38,7 @@ from scfm_controlled_manipulations.io import (
 )
 from scfm_controlled_manipulations.obs_columns import (
     resolve_batch_column,
-    resolve_cell_type_column,
+    resolve_cell_type_column_for_dataset,
 )
 from scfm_controlled_manipulations.sweep_config import (
     expand_intervention_specs,
@@ -82,6 +82,13 @@ def validate_evaluation_config(ev: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize evaluation config values once at run start."""
     validated = dict(ev)
     validated["k_values"] = _require_positive_int_list(validated["k_values"], key="k_values")
+    tw_raw = validated.get("trustworthiness_k_values")
+    if tw_raw is None:
+        validated["trustworthiness_k_values"] = list(validated["k_values"])
+    else:
+        validated["trustworthiness_k_values"] = _require_positive_int_list(
+            tw_raw, key="trustworthiness_k_values"
+        )
     validated["diffusion_t_values"] = _require_positive_int_list(
         validated["diffusion_t_values"], key="diffusion_t_values"
     )
@@ -162,7 +169,7 @@ def _planned_interventions(
 def append_raw_embedding_gain_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Append rows with ``metric_category`` suffix ``_gain`` (embedding minus raw) where both exist."""
     gain_rows: list[dict[str, Any]] = []
-    for cat in ("embedding_shift", "knn_metrics"):
+    for cat in ("embedding_shift", "knn_metrics", "neighborhood_preservation_metrics"):
         sub = df[df["metric_category"] == cat]
         if sub.empty or "space" not in sub.columns:
             continue
@@ -270,6 +277,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
 
     models = list(cfg["models"])
     k_values = [int(k) for k in ev["k_values"]]
+    trustworthiness_k_values = [int(k) for k in ev["trustworthiness_k_values"]]
     distance_metrics = list(ev["distance_metrics"])
     diffusion_t_values = [int(t) for t in ev["diffusion_t_values"]]
     leiden_resolutions = [float(x) for x in ev["leiden_resolutions"]]
@@ -309,10 +317,11 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     mp_method = mp.get_context("spawn").get_start_method()
     logger.info(
         "Plan: models=%d interventions_with_embeddings=%d "
-        "(k=%s metrics=%s diffusion_t=%s leiden_res=%s cache=%s workers=%d mp=%s)",
+        "(k=%s trustworthiness_k=%s metrics=%s diffusion_t=%s leiden_res=%s cache=%s workers=%d mp=%s)",
         len(models),
         total_jobs,
         k_values,
+        trustworthiness_k_values,
         distance_metrics,
         diffusion_t_values,
         leiden_resolutions,
@@ -330,7 +339,11 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     dataset_ctx = load_dataset_context(results_dir)
     knn_cache = dataset_ctx.knn_cache
     obs_cols = dataset_ctx.obs.columns
-    cell_type_col = resolve_cell_type_column(obs_cols, cell_type_col_config)
+    cell_type_col = resolve_cell_type_column_for_dataset(
+        obs_cols,
+        cell_type_col_config,
+        dataset_id=dataset_id,
+    )
     batch_col = resolve_batch_column(obs_cols, batch_col_config)
     if cell_type_col_config and cell_type_col != cell_type_col_config:
         logger.info(
@@ -408,6 +421,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             dataset_id=dataset_id,
             seed=seed,
             k_values=k_values,
+            trustworthiness_k_values=trustworthiness_k_values,
             distance_metrics=distance_metrics,
             diffusion_t_values=diffusion_t_values,
             leiden_resolutions=leiden_resolutions,
@@ -459,6 +473,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                 dataset_id=dataset_id,
                 seed=seed,
                 k_values=k_values,
+                trustworthiness_k_values=trustworthiness_k_values,
                 distance_metrics=distance_metrics,
                 diffusion_t_values=diffusion_t_values,
                 leiden_resolutions=leiden_resolutions,

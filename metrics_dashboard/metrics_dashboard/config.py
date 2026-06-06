@@ -140,6 +140,18 @@ DASHBOARD_METRICS: dict[str, DashboardMetric] = {
         space="embedding",
         default_k=15,
     ),
+    "trustworthiness": DashboardMetric(
+        key="trustworthiness",
+        label="Trustworthiness",
+        description=(
+            "Venna & Kaski trustworthiness: how well reference kNN neighborhoods are preserved "
+            "in the manipulated space (sklearn.manifold.trustworthiness). Higher is better."
+        ),
+        metric_category="neighborhood_preservation_metrics",
+        metric_name="trustworthiness",
+        space="embedding",
+        default_k=15,
+    ),
     "clustering_ari": DashboardMetric(
         key="clustering_ari",
         label="Leiden clustering ARI",
@@ -164,7 +176,7 @@ PLOT_SET_DESCRIPTIONS = {
     "set1": (
         "Grid layout: **rows** = manipulation type; **columns** = manipulation config "
         "(e.g. fraction, dropout rate, shuffle variant); **x-axis** = diffusion time *t* "
-        "for KL/JS, **k** for kNN recall, or the relevant sweep for other metrics. "
+        "for KL/JS, **k** for kNN recall and trustworthiness, or the relevant sweep for other metrics. "
         "Colored lines = models. "
         "Bands = mean ± 1 std across cells; dashed = permutation null mean."
     ),

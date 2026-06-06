@@ -20,6 +20,9 @@ from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
 )
 from scfm_controlled_manipulations.evaluation.metrics_clustering import compute_clustering_metrics
 from scfm_controlled_manipulations.evaluation.metrics_knn import compute_knn_metrics
+from scfm_controlled_manipulations.evaluation.metrics_neighborhood_preservation import (
+    compute_neighborhood_preservation_metrics,
+)
 from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
     compute_embedding_shift,
     compute_embedding_stats,
@@ -42,6 +45,7 @@ def evaluate_intervention(
     dataset_id: str,
     seed: int,
     k_values: list[int],
+    trustworthiness_k_values: list[int],
     distance_metrics: list[str],
     diffusion_t_values: list[int],
     leiden_resolutions: list[float],
@@ -153,6 +157,28 @@ def evaluate_intervention(
     )
     logger.info(
         "  [%d/%d] %s — knn_metrics done (%.1fs)",
+        int_index,
+        n_planned,
+        iid,
+        time.perf_counter() - t0,
+    )
+
+    t0 = time.perf_counter()
+    frames.append(
+        compute_neighborhood_preservation_metrics(
+            bundle=bundle,
+            dataset_id=dataset_id,
+            model=model,
+            intervention_id=iid,
+            intervention_name=name,
+            seed=seed,
+            distance_metrics=distance_metrics,
+            trustworthiness_k_values=trustworthiness_k_values,
+            n_null_permutations=knn_n_null_permutations,
+        )
+    )
+    logger.info(
+        "  [%d/%d] %s — neighborhood_preservation done (%.1fs)",
         int_index,
         n_planned,
         iid,

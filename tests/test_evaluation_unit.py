@@ -345,6 +345,96 @@ class DiffusionPermutationNullTest(unittest.TestCase):
         self.assertGreater(null_js, aligned_js)
 
 
+class TrustworthinessPermutationNullTest(unittest.TestCase):
+    def _mean_null_trustworthiness(
+        self,
+        ref: np.ndarray | sp.csr_matrix,
+        man: np.ndarray | sp.csr_matrix,
+        *,
+        k: int,
+        metric: str,
+        seed: int,
+        space: str = "embedding",
+    ) -> float:
+        from scfm_controlled_manipulations.evaluation.metrics_neighborhood_preservation import (
+            _null_seed,
+            _permutation_null_mean,
+            _trustworthiness_value,
+        )
+
+        return _permutation_null_mean(
+            ref,
+            man,
+            value_fn=_trustworthiness_value,
+            seed=seed,
+            metric_name="trustworthiness",
+            space=space,
+            distance_metric=metric,
+            k=k,
+            n_cells=ref.shape[0],
+            n_null=1,
+        )
+
+    def test_perfect_preservation_scores_one(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_neighborhood_preservation import (
+            _trustworthiness_value,
+        )
+
+        rng = np.random.default_rng(0)
+        ref = rng.standard_normal((80, 8))
+        man = ref.copy()
+        value = _trustworthiness_value(ref, man, 5, "euclidean")
+        self.assertAlmostEqual(value, 1.0, places=10)
+
+    def test_empirical_null_breaks_pairing(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_neighborhood_preservation import (
+            _trustworthiness_value,
+        )
+
+        rng = np.random.default_rng(0)
+        ref = rng.standard_normal((80, 8))
+        man = ref.copy()
+        value = _trustworthiness_value(ref, man, 5, "euclidean")
+        null = self._mean_null_trustworthiness(ref, man, k=5, metric="euclidean", seed=42)
+        self.assertLess(null, value)
+        self.assertEqual(
+            null,
+            self._mean_null_trustworthiness(ref, man, k=5, metric="euclidean", seed=42),
+        )
+
+    def test_sparse_raw_matrices(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_neighborhood_preservation import (
+            compute_neighborhood_preservation_metrics,
+        )
+
+        rng = np.random.default_rng(0)
+        ref = sp.csr_matrix(rng.standard_normal((40, 12)))
+        bundle = type(
+            "Bundle",
+            (),
+            {
+                "raw_ref": ref,
+                "raw_man": ref.copy(),
+                "emb_ref": np.asarray(ref.toarray()),
+                "emb_man": np.asarray(ref.toarray()),
+            },
+        )()
+        df = compute_neighborhood_preservation_metrics(
+            bundle=bundle,
+            dataset_id="test",
+            model="pca",
+            intervention_id="iid",
+            intervention_name="reference",
+            seed=0,
+            distance_metrics=["euclidean"],
+            trustworthiness_k_values=[5],
+        )
+        raw = df[(df["space"] == "raw") & (df["metric_name"] == "trustworthiness")]
+        self.assertEqual(len(raw), 1)
+        self.assertAlmostEqual(float(raw.iloc[0]["value_mean"]), 1.0, places=10)
+        self.assertTrue(np.isfinite(float(raw.iloc[0]["null_value"])))
+
+
 class EmbeddingAlignmentTest(unittest.TestCase):
     def test_dense_embedding_aligned_to_obs_reorders_rows(self) -> None:
         import anndata as ad

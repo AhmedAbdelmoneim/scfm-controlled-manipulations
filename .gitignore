@@ -203,3 +203,5 @@ run_logs/
 
 # local-only scripts (batch helpers are tracked below)
 scripts/*
+
+results/*

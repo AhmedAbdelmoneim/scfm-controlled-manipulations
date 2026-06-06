@@ -11,7 +11,10 @@ import numpy as np
 import pandas as pd
 
 from metrics_dashboard.config import MODEL_ORDER, PARAM_KEYS
-from metrics_dashboard.obs_columns import resolve_batch_column, resolve_cell_type_column
+from metrics_dashboard.obs_columns import (
+    resolve_batch_column,
+    resolve_cell_type_column_for_dataset,
+)
 
 METRICS_FILENAME = "metrics.parquet"
 SUMMARY_FILENAME = "summary.json"
@@ -149,7 +152,11 @@ def extract_dataset_summary(
     adata = ad.read_h5ad(ref_path, backed="r")
     try:
         obs_cols = adata.obs.columns
-        resolved_cell_type = resolve_cell_type_column(obs_cols, cell_type_col)
+        resolved_cell_type = resolve_cell_type_column_for_dataset(
+            obs_cols,
+            cell_type_col,
+            dataset_id=dataset_id,
+        )
         resolved_batch = resolve_batch_column(obs_cols, batch_col)
         out: dict[str, Any] = {
             "dataset_id": dataset_id,

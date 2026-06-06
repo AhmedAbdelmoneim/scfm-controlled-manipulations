@@ -126,11 +126,7 @@ def check_raw_counts_in_x(x: sp.spmatrix | np.ndarray) -> list[Finding]:
                 )
             )
         max_val = float(np.max(positive))
-        if (
-            integer_like < 0.95
-            and max_val < 25
-            and float(np.mean(positive < 15)) > 0.8
-        ):
+        if integer_like < 0.95 and max_val < 25 and float(np.mean(positive < 15)) > 0.8:
             findings.append(
                 Finding(
                     Level.WARN,
@@ -299,9 +295,7 @@ def check_gene_metadata(
         )
     else:
         gene_names = adata.var[gene_name_column].astype(str)
-        empty = int(
-            ((gene_names.str.strip() == "") | adata.var[gene_name_column].isna()).sum()
-        )
+        empty = int(((gene_names.str.strip() == "") | adata.var[gene_name_column].isna()).sum())
         if empty:
             findings.append(
                 Finding(
@@ -580,7 +574,9 @@ def check_cross_file_consistency(
             var = list(adata.var_names)
             adata.file.close()
         except Exception as exc:
-            findings.append(Finding(Level.ERROR, f"{path.name}: cannot read for cross-check: {exc}"))
+            findings.append(
+                Finding(Level.ERROR, f"{path.name}: cannot read for cross-check: {exc}")
+            )
             continue
 
         if obs != ref_obs:

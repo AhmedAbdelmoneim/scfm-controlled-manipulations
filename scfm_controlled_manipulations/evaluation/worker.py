@@ -46,6 +46,7 @@ class SharedEvalContext:
     dataset_id: str
     seed: int
     k_values: list[int]
+    trustworthiness_k_values: list[int]
     distance_metrics: list[str]
     diffusion_t_values: list[int]
     leiden_resolutions: list[float]
@@ -92,6 +93,7 @@ class SharedEvalPayload:
     dataset_id: str
     seed: int
     k_values: list[int]
+    trustworthiness_k_values: list[int]
     distance_metrics: list[str]
     diffusion_t_values: list[int]
     leiden_resolutions: list[float]
@@ -120,6 +122,7 @@ def build_shared_context(
     dataset_id: str,
     seed: int,
     k_values: list[int],
+    trustworthiness_k_values: list[int],
     distance_metrics: list[str],
     diffusion_t_values: list[int],
     leiden_resolutions: list[float],
@@ -182,6 +185,7 @@ def build_shared_context(
         dataset_id=dataset_id,
         seed=seed,
         k_values=k_values,
+        trustworthiness_k_values=trustworthiness_k_values,
         distance_metrics=distance_metrics,
         diffusion_t_values=diffusion_t_values,
         leiden_resolutions=leiden_resolutions,
@@ -209,6 +213,7 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
         dataset_id=payload.dataset_id,
         seed=payload.seed,
         k_values=payload.k_values,
+        trustworthiness_k_values=payload.trustworthiness_k_values,
         distance_metrics=payload.distance_metrics,
         diffusion_t_values=payload.diffusion_t_values,
         leiden_resolutions=payload.leiden_resolutions,
@@ -241,6 +246,7 @@ def run_intervention_task(task: InterventionTask) -> list[pd.DataFrame]:
         dataset_id=ctx.dataset_id,
         seed=ctx.seed,
         k_values=ctx.k_values,
+        trustworthiness_k_values=ctx.trustworthiness_k_values,
         distance_metrics=ctx.distance_metrics,
         diffusion_t_values=ctx.diffusion_t_values,
         leiden_resolutions=ctx.leiden_resolutions,
