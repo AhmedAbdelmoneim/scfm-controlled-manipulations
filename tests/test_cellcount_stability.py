@@ -8,6 +8,7 @@ import unittest
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
@@ -56,6 +57,67 @@ class TestCellcountStability(unittest.TestCase):
         picked = obs.loc[idx, "cell_type"].value_counts()
         self.assertEqual(picked["A"], 40)
         self.assertEqual(picked["B"], 10)
+
+    def test_subsample_atlas_excludes_zero_raw_counts(self) -> None:
+        import tempfile
+
+        import anndata as ad
+        from cellcount_sweep import subsample_atlas
+
+        raw = ad.AnnData(sp.csr_matrix([[1.0, 0.0], [0.0, 0.0], [2.0, 1.0], [3.0, 0.0]]))
+        source = ad.AnnData(
+            X=np.zeros((4, 2), dtype=np.float32),
+            obs=pd.DataFrame({"cell_type": ["A", "A", "B", "B"]}, index=[f"c{i}" for i in range(4)]),
+        )
+        source.raw = raw
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "source.h5ad"
+            out_path = Path(tmp) / "out.h5ad"
+            source.write(source_path)
+
+            n_written = subsample_atlas(
+                source_path,
+                out_path,
+                n_cells=2,
+                seed=0,
+                stratified=False,
+            )
+            self.assertEqual(n_written, 2)
+            out = ad.read_h5ad(out_path)
+            self.assertEqual(out.n_obs, 2)
+            raw_sums = np.asarray(out.raw.X.sum(axis=1)).ravel()
+            self.assertTrue(np.all(raw_sums > 0))
+
+    def test_subsample_immune_promotes_raw_counts_to_x(self) -> None:
+        import tempfile
+
+        import anndata as ad
+        from cellcount_sweep import subsample_atlas
+
+        raw = ad.AnnData(sp.csr_matrix([[5.0, 0.0], [0.0, 0.0], [2.0, 1.0], [3.0, 0.0]]))
+        source = ad.AnnData(
+            X=np.array([[-1.0, 0.5], [0.0, 0.0], [1.0, 2.0], [0.5, 0.5]], dtype=np.float32),
+            obs=pd.DataFrame({"cell_type": ["A", "A", "B", "B"]}, index=[f"c{i}" for i in range(4)]),
+        )
+        source.raw = raw
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "source.h5ad"
+            out_path = Path(tmp) / "out.h5ad"
+            source.write(source_path)
+
+            n_written = subsample_atlas(
+                source_path,
+                out_path,
+                n_cells=2,
+                seed=0,
+                stratified=False,
+                atlas="immune",
+            )
+            self.assertEqual(n_written, 2)
+            out = ad.read_h5ad(out_path)
+            self.assertIsNone(out.raw)
+            x_sums = np.asarray(out.X.sum(axis=1)).ravel()
+            self.assertTrue(np.all(x_sums > 0))
 
     def test_size_sweep_paths(self) -> None:
         paths = sweep_paths(

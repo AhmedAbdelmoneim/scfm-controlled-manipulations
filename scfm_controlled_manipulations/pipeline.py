@@ -25,6 +25,7 @@ from scfm_controlled_manipulations.io import (
     intervention_id,
     manipulation_path,
 )
+from scfm_controlled_manipulations.qc import filter_zero_count_cells
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,7 @@ def _init_worker_adata(input_path: str, options: Mapping[str, Any]) -> None:
         gene_name_column=str(options.get("gene_name_column", "gene_name")),
         ensembl_id_column=str(options.get("ensembl_id_column", "ensembl_id")),
     )
+    filter_zero_count_cells(_WORKER_ADATA)
     logger.debug(
         "Worker loaded input AnnData with %d cells and %d genes",
         _WORKER_ADATA.n_obs,
@@ -383,6 +385,7 @@ def _prepare_reference_phase(
         gene_name_column=str(output_options["gene_name_column"]),
         ensembl_id_column=str(output_options["ensembl_id_column"]),
     )
+    filter_zero_count_cells(adata_in)
     logger.info("Loaded input AnnData with %d cells and %d genes", adata_in.n_obs, adata_in.n_vars)
     _write_embedding_inputs(adata_in, manip_dir, output_options)
     if prewarm_caches:

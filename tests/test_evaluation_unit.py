@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 import unittest
 
+import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -265,6 +266,42 @@ class CellBatchMetricsTest(unittest.TestCase):
         )
         for _, row in manip.iterrows():
             self.assertTrue(np.isfinite(row["value_mean"]))
+
+
+class FilterZeroCountCellsTest(unittest.TestCase):
+    def test_removes_zero_count_cells_and_logs_count(self) -> None:
+        from scfm_controlled_manipulations.qc import filter_zero_count_cells
+
+        X = sp.csr_matrix(
+            [
+                [1.0, 0.0],
+                [0.0, 0.0],
+                [2.0, 3.0],
+            ]
+        )
+        adata = ad.AnnData(X=X, obs={"cell_id": ["a", "b", "c"]})
+        kept = filter_zero_count_cells(adata)
+        self.assertEqual(kept, 2)
+        self.assertEqual(list(adata.obs["cell_id"]), ["a", "c"])
+
+    def test_noop_when_all_nonzero(self) -> None:
+        from scfm_controlled_manipulations.qc import filter_zero_count_cells
+
+        adata = ad.AnnData(X=sp.csr_matrix([[1.0, 2.0], [3.0, 0.0]]))
+        kept = filter_zero_count_cells(adata)
+        self.assertEqual(kept, 2)
+        self.assertEqual(adata.n_obs, 2)
+
+    def test_uses_raw_counts_when_present(self) -> None:
+        from scfm_controlled_manipulations.qc import filter_zero_count_cells
+
+        X = np.array([[-1.0, 0.0], [2.0, 3.0]], dtype=np.float32)
+        raw = ad.AnnData(sp.csr_matrix([[5.0, 0.0], [1.0, 2.0]]))
+        adata = ad.AnnData(X=X)
+        adata.raw = raw
+        kept = filter_zero_count_cells(adata)
+        self.assertEqual(kept, 2)
+        self.assertEqual(adata.n_obs, 2)
 
 
 class KnnOverlapTest(unittest.TestCase):
