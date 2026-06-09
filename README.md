@@ -44,11 +44,19 @@ Both use the same `CONFIG` (default `configs/default.yaml`). Evaluation hyperpar
 the top-level `evaluation:` key (see `configs/default.yaml`). Diffusion transitions are cached under
 `results_dir/evaluation_cache/`.
 
-Set `evaluation.evaluation_workers` to parallelize across interventions (e.g. `80` on a large node).
-Each worker is a **process** pinned to **one** BLAS/sklearn thread; limits are applied in
-`scripts/lib/eval_runtime_env.sh` and in Python before numpy loads. Evaluation workers always use
-the `spawn` start method for OpenMP safety, and Leiden runs in-process within each worker.
-Diffusion pickles live under `evaluation_cache/` with file locking.
+Set `evaluation.evaluation_workers` to parallelize across interventions. For large cell counts
+(10k–20k), keep workers modest (e.g. 8 on 32 cores, 16–20 on 80 cores): each spawned worker loads
+a **bootstrap snapshot** built once in the main process rather than rebuilding reference kNN graphs.
+
+Thread knobs (all default to `1`):
+
+- `evaluation_setup_threads` — BLAS/sklearn threads for sklearn reference kNN only (not scanpy
+  Leiden / numba, which must stay single-threaded after process init).
+- `evaluation_worker_threads` — per spawned worker during intervention metrics.
+
+Limits are applied in `scripts/lib/eval_runtime_env.sh` and in Python before numpy loads.
+Evaluation always uses the `spawn` start method; Leiden runs in-process within each worker.
+Reference kNN and diffusion pickles live under `evaluation_cache/` with file locking.
 
 **One atlas in the background:**
 

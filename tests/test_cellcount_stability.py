@@ -27,8 +27,11 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "metrics_dashboard"))
 from analyze_cellcount_stability import (  # noqa: E402
     aggregate_across_seeds,
+    filter_cv_envelope_metrics,
     filter_stability_plot_metrics,
     find_stabilization_n,
+    normalize_aggregate_by_cell_count,
+    _cv_percentile_by_cell_count,
 )
 
 
@@ -190,11 +193,12 @@ class TestCellcountStability(unittest.TestCase):
     def test_filter_stability_plot_metrics(self) -> None:
         agg = pd.DataFrame(
             {
-                "atlas": ["immune"] * 14,
-                "cell_count": [200, 500] * 7,
-                "model": ["scimilarity"] * 14,
+                "atlas": ["immune"] * 16,
+                "cell_count": [200, 500] * 8,
+                "model": ["scimilarity"] * 16,
                 "metric_category": (
                     ["knn_metrics"] * 8
+                    + ["neighborhood_preservation_metrics"] * 2
                     + ["clustering_metrics"] * 2
                     + ["cell_type_and_batch_metrics"] * 4
                 ),
@@ -207,6 +211,8 @@ class TestCellcountStability(unittest.TestCase):
                     "diffusion_js",
                     "knn_recall",
                     "knn_recall",
+                    "trustworthiness",
+                    "trustworthiness",
                     "leiden_ari",
                     "leiden_ari",
                     "cell_type_asw",
@@ -214,24 +220,63 @@ class TestCellcountStability(unittest.TestCase):
                     "batch_ilisi",
                     "batch_ilisi",
                 ],
-                "space": ["embedding"] * 10 + ["embedding_manipulated"] * 4,
-                "k": [15.0] * 14,
-                "diffusion_t": [1.0, 2.0, 4.0, 8.0, 1.0, 2.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
-                "resolution": [-1.0] * 12 + [1.0, 1.0],
-                "distance_metric": ["euclidean"] * 14,
-                "n_seeds": [5] * 14,
-                "mean_across_seeds": np.linspace(0.1, 0.8, 14),
-                "std_across_seeds": [0.01] * 14,
-                "cv_across_seeds": [0.05] * 14,
-                "ci_half_width": [0.02] * 14,
-                "ci_half_width_rel": [0.03] * 14,
+                "space": ["embedding"] * 12 + ["embedding_manipulated"] * 4,
+                "k": [15.0] * 16,
+                "diffusion_t": [1.0, 2.0, 4.0, 8.0, 1.0, 2.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
+                "resolution": [-1.0] * 14 + [1.0, 1.0],
+                "distance_metric": ["euclidean"] * 16,
+                "n_seeds": [5] * 16,
+                "mean_across_seeds": np.linspace(0.1, 0.8, 16),
+                "std_across_seeds": [0.01] * 16,
+                "cv_across_seeds": [0.05] * 16,
+                "ci_half_width": [0.02] * 16,
+                "ci_half_width_rel": [0.03] * 16,
             }
         )
         plots = filter_stability_plot_metrics(agg)
-        # knn + clustering + 4 KL t + 2 JS t + 2 cell/batch (no graph_connectivity in fixture)
-        self.assertEqual(plots["plot_key"].nunique(), 10)
+        # knn + trustworthiness + clustering + 4 KL t + 2 JS t + 2 JS/n t + 2 cell/batch
+        self.assertEqual(plots["plot_key"].nunique(), 13)
         self.assertIn("kl_divergence_t8", set(plots["plot_key"]))
+        self.assertIn("js_divergence_per_n_t2", set(plots["plot_key"]))
+        self.assertIn("trustworthiness", set(plots["plot_key"]))
         self.assertIn("cell_type_asw", set(plots["plot_key"]))
+
+    def test_filter_cv_envelope_metrics(self) -> None:
+        df = pd.DataFrame(
+            {
+                "metric_name": ["knn_recall", "diffusion_js", "trustworthiness", "knn_recall"],
+                "space": ["embedding", "embedding", "embedding", "raw"],
+            }
+        )
+        out = filter_cv_envelope_metrics(df)
+        self.assertEqual(list(out["metric_name"]), ["knn_recall", "diffusion_js"])
+
+    def test_cv_percentile_by_cell_count(self) -> None:
+        df = pd.DataFrame(
+            {
+                "cell_count": [200, 200, 200, 500, 500],
+                "cv_across_seeds": [0.1, 0.2, 0.3, 0.4, 0.6],
+            }
+        )
+        p90 = _cv_percentile_by_cell_count(df, 0.9)
+        self.assertEqual(list(p90["cell_count"]), [200, 500])
+        self.assertAlmostEqual(float(p90.loc[p90["cell_count"] == 200, "cv_quantile"]), 0.28)
+        self.assertAlmostEqual(float(p90.loc[p90["cell_count"] == 500, "cv_quantile"]), 0.58)
+
+    def test_normalize_aggregate_by_cell_count(self) -> None:
+        rows = pd.DataFrame(
+            {
+                "cell_count": [200, 1000],
+                "mean_across_seeds": [0.4, 0.5],
+                "std_across_seeds": [0.04, 0.05],
+                "ci_half_width": [0.02, 0.025],
+                "cv_across_seeds": [0.1, 0.1],
+            }
+        )
+        norm = normalize_aggregate_by_cell_count(rows)
+        self.assertAlmostEqual(norm.loc[0, "mean_across_seeds"], 0.4 / 200)
+        self.assertAlmostEqual(norm.loc[1, "mean_across_seeds"], 0.5 / 1000)
+        self.assertAlmostEqual(norm.loc[0, "std_across_seeds"], 0.04 / 200)
 
 
 if __name__ == "__main__":

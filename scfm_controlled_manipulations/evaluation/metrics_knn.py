@@ -24,6 +24,7 @@ import pandas as pd
 import scipy.sparse as sp
 from sklearn.neighbors import NearestNeighbors
 
+from scfm_controlled_manipulations.compute_env import blas_thread_limited
 from scfm_controlled_manipulations.evaluation.disk_cache import (
     load_or_build_pickle,
     read_pickle_cache,
@@ -49,9 +50,17 @@ def knn_neighbors(
     n_jobs: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """kNN distances and indices (excluding self), shape ``(n_cells, k)``."""
-    nn = NearestNeighbors(n_neighbors=k + 1, metric=metric, n_jobs=n_jobs).fit(mat)
-    dist, idx = nn.kneighbors(mat)
-    return dist[:, 1:], idx[:, 1:]
+    n_jobs = max(1, int(n_jobs))
+
+    def _compute() -> tuple[np.ndarray, np.ndarray]:
+        nn = NearestNeighbors(n_neighbors=k + 1, metric=metric, n_jobs=n_jobs).fit(mat)
+        dist, idx = nn.kneighbors(mat)
+        return dist[:, 1:], idx[:, 1:]
+
+    if n_jobs <= 1:
+        return _compute()
+    with blas_thread_limited(n_jobs):
+        return _compute()
 
 
 def knn_overlap_per_cell(
@@ -404,6 +413,7 @@ def prewarm_reference_evaluation_disk_cache(
     diffusion_t_values: list[int],
     alpha: float = 10.0,
     bandwidth_k: int | None = None,
+    knn_n_jobs: int = 1,
 ) -> None:
     """Build shared reference kNN + diffusion bundles once before parallel workers start."""
     if not k_values or not distance_metrics:
@@ -428,8 +438,8 @@ def prewarm_reference_evaluation_disk_cache(
             knn_label = f"knn side=ref space={space} metric={metric} k={k_max} ({n_cells} cells)"
             ref_dist_max, ref_idx_max = load_or_build_pickle(
                 knn_path,
-                lambda ref_mat=ref_mat, metric=metric: knn_neighbors(
-                    ref_mat, k_max, metric, n_jobs=1
+                lambda ref_mat=ref_mat, metric=metric, knn_n_jobs=knn_n_jobs: knn_neighbors(
+                    ref_mat, k_max, metric, n_jobs=knn_n_jobs
                 ),
                 label=knn_label,
             )

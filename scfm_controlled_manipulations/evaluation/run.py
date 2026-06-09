@@ -26,7 +26,10 @@ from scfm_controlled_manipulations.evaluation.worker import (
     build_shared_context,
     install_shared_context,
     run_intervention_task,
+    worker_bootstrap_fingerprint,
+    worker_bootstrap_path,
     worker_initializer_spawn,
+    write_worker_bootstrap,
 )
 from scfm_controlled_manipulations.io import (
     embedding_path,
@@ -56,6 +59,8 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "batch_col": "batch",
     "dataset_id": None,
     "evaluation_workers": 1,
+    "evaluation_setup_threads": 1,
+    "evaluation_worker_threads": 1,
     "stats_shift_pairwise_cell_subsample_n": 500,
     "stats_shift_pairwise_max_pairs": 10_000,
     "knn_alpha": 10.0,
@@ -101,6 +106,12 @@ def validate_evaluation_config(ev: dict[str, Any]) -> dict[str, Any]:
     validated["distance_metrics"] = distance_metrics
 
     validated["evaluation_workers"] = max(1, int(validated["evaluation_workers"]))
+    validated["evaluation_setup_threads"] = max(
+        1, int(validated.get("evaluation_setup_threads", 1))
+    )
+    validated["evaluation_worker_threads"] = max(
+        1, int(validated.get("evaluation_worker_threads", 1))
+    )
 
     validated["stats_shift_pairwise_cell_subsample_n"] = int(
         validated["stats_shift_pairwise_cell_subsample_n"]
@@ -272,6 +283,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     dataset_id = _dataset_id(cfg, ev)
     cache_path = evaluation_cache_dir(results_dir)
     evaluation_workers = max(1, int(ev.get("evaluation_workers", 1)))
+    evaluation_setup_threads = max(1, int(ev.get("evaluation_setup_threads", 1)))
+    evaluation_worker_threads = max(1, int(ev.get("evaluation_worker_threads", 1)))
 
     evaluation_dir(results_dir).mkdir(parents=True, exist_ok=True)
 
@@ -330,8 +343,11 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         mp_method,
     )
     logger.info(
-        "Each worker uses 1 BLAS/sklearn thread; set evaluation.evaluation_workers up to your CPU budget. "
-        "Process pool start method is spawn and Leiden runs in-process."
+        "Thread budget: setup_threads=%d worker_threads=%d process_workers=%d (spawn). "
+        "Workers load a pre-built bootstrap snapshot when using a process pool.",
+        evaluation_setup_threads,
+        evaluation_worker_threads,
+        evaluation_workers,
     )
 
     logger.info("Loading shared reference raw matrix and obs (once per dataset)")
@@ -433,6 +449,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             knn_alpha=knn_alpha,
             knn_bandwidth_k=knn_bandwidth_k,
             knn_n_null_permutations=knn_n_null_permutations,
+            knn_build_threads=evaluation_setup_threads,
         )
         logger.info(
             "Reference context ready (%.1fs; cell/batch templates=%d; Leiden cache=%d; stats cache=%s)",
@@ -443,6 +460,27 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         )
 
         pool_workers = min(evaluation_workers, n_planned)
+        bootstrap_path: Path | None = None
+        if pool_workers > 1:
+            fingerprint = worker_bootstrap_fingerprint(
+                dataset_id=dataset_id,
+                model=model,
+                seed=seed,
+                k_values=k_values,
+                trustworthiness_k_values=trustworthiness_k_values,
+                distance_metrics=distance_metrics,
+                diffusion_t_values=diffusion_t_values,
+                leiden_resolutions=leiden_resolutions,
+                knn_alpha=knn_alpha,
+                knn_bandwidth_k=knn_bandwidth_k,
+                knn_n_null_permutations=knn_n_null_permutations,
+                cell_type_col=cell_type_col,
+                batch_col=batch_col,
+            )
+            bootstrap_path = worker_bootstrap_path(
+                cache_path, model=model, fingerprint=fingerprint
+            )
+            write_worker_bootstrap(bootstrap_path, shared)
 
         if pool_workers <= 1:
             install_shared_context(shared)
@@ -485,6 +523,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                 knn_alpha=knn_alpha,
                 knn_bandwidth_k=knn_bandwidth_k,
                 knn_n_null_permutations=knn_n_null_permutations,
+                bootstrap_path=str(bootstrap_path) if bootstrap_path is not None else None,
+                worker_threads=evaluation_worker_threads,
             )
             executor_kwargs = {
                 "max_workers": pool_workers,

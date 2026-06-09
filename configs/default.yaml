@@ -52,8 +52,12 @@ evaluation:
   cell_type_col: cell_type
   batch_col: batch
   dataset_id: null
-  # Process pool size (each worker uses 1 BLAS/sklearn thread). Diffusion matrices cache on disk.
+  # Process pool size. Workers load a bootstrap snapshot built in the main process (spawn).
   evaluation_workers: 48
+  # BLAS/sklearn threads for one-time reference setup in the main process (kNN graph build).
+  evaluation_setup_threads: 1
+  # BLAS/sklearn threads inside each spawned worker during intervention metrics.
+  evaluation_worker_threads: 1
   # Within-ref / within-man pairwise spread only (cell subsample then all-pairs).
   stats_shift_pairwise_cell_subsample_n: 500
   stats_shift_pairwise_max_pairs: 10000

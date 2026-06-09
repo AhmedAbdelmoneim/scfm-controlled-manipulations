@@ -106,3 +106,14 @@ class LeidenCache:
 
     def __len__(self) -> int:
         return len(self._labels)
+
+    def __getstate__(
+        self,
+    ) -> dict[tuple[int, str, int, float, int], np.ndarray]:
+        return self._labels
+
+    def __setstate__(
+        self, state: dict[tuple[int, str, int, float, int], np.ndarray]
+    ) -> None:
+        self._labels = state
+        self._lock = threading.Lock()

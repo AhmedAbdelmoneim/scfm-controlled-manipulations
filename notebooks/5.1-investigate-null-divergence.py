@@ -25,8 +25,10 @@ def _():
 
     from scfm_controlled_manipulations.evaluation.data import dense_embedding_aligned_to_obs
     from scfm_controlled_manipulations.evaluation.metrics_knn import (
+        build_weighted_knn_adjacency,
         build_weighted_knn_adjacency_from_knn,
         knn_neighbors,
+        row_normalize_sparse,
         sym_kl_js_per_cell,
         transition_powers,
     )
@@ -70,6 +72,8 @@ def _():
     EVAL_SEED = 42
     PLOT_DIFFUSION_T = 1
     DIFFUSION_T_VALUES = [1, 2, 4, 8, 16]
+    SPECTRAL_N_EIGENVALUES = 40
+    MAX_PAIRWISE_PAIRS = 80_000
     REFERENCE_INTERVENTION_ID = "reference"
     return (
         DEFAULT_K,
@@ -82,6 +86,7 @@ def _():
         KNN_ALPHA,
         Line2D,
         MANIPULATIONS_DIR,
+        MAX_PAIRWISE_PAIRS,
         MODEL_COLORS,
         MODEL_ORDER,
         PARAM_KEY,
@@ -89,7 +94,9 @@ def _():
         PLOT_DIFFUSION_T,
         REFERENCE_INTERVENTION_ID,
         SPACE,
+        SPECTRAL_N_EIGENVALUES,
         ad,
+        build_weighted_knn_adjacency,
         build_weighted_knn_adjacency_from_knn,
         dense_embedding_aligned_to_obs,
         embedding_path,
@@ -98,6 +105,7 @@ def _():
         np,
         pd,
         plt,
+        row_normalize_sparse,
         sym_kl_js_per_cell,
         transition_powers,
     )
@@ -110,15 +118,19 @@ def _(
     EVAL_SEED,
     KNN_ALPHA,
     Line2D,
+    MAX_PAIRWISE_PAIRS,
     REFERENCE_INTERVENTION_ID,
     SPACE,
+    SPECTRAL_N_EIGENVALUES,
     ad,
+    build_weighted_knn_adjacency,
     build_weighted_knn_adjacency_from_knn,
     dense_embedding_aligned_to_obs,
     knn_neighbors,
     np,
     pd,
     plt,
+    row_normalize_sparse,
     sym_kl_js_per_cell,
     transition_powers,
 ):
@@ -498,6 +510,173 @@ def _(
         fig.tight_layout()
         return fig
 
+    def _cap_upper_triangle_pairs(n_cells, max_pairs, seed):
+        i_idx, j_idx = np.triu_indices(n_cells, k=1)
+        if max_pairs is None or i_idx.size <= max_pairs:
+            return i_idx, j_idx
+        rng = np.random.default_rng(seed)
+        pick = rng.choice(i_idx.size, size=int(max_pairs), replace=False)
+        return i_idx[pick], j_idx[pick]
+
+    def diffusion_transition_eigenvalues(
+        emb,
+        *,
+        k,
+        metric=DISTANCE_METRIC,
+        alpha=KNN_ALPHA,
+        n_eigs=SPECTRAL_N_EIGENVALUES,
+    ):
+        adj = build_weighted_knn_adjacency(emb, k, metric, alpha=alpha)
+        transition = row_normalize_sparse(adj).toarray()
+        evals = np.linalg.eigvals(transition)
+        magnitudes = np.sort(np.abs(evals))[::-1]
+        n_show = min(int(n_eigs), magnitudes.size)
+        spectral_gap = (
+            float(1.0 - magnitudes[1]) if magnitudes.size > 1 else float("nan")
+        )
+        return magnitudes[:n_show], spectral_gap
+
+    def plot_spectral_gap_grid(
+        embedding_pairs,
+        *,
+        model_order,
+        k,
+        n_eigs=SPECTRAL_N_EIGENVALUES,
+    ):
+        n_models = len(model_order)
+        fig, axes = plt.subplots(
+            n_models, 2, figsize=(10, 2.6 * n_models), squeeze=False, sharey=True
+        )
+        col_titles = ("Reference", "Manipulated")
+
+        for row_idx, model in enumerate(model_order):
+            emb_ref, emb_man = embedding_pairs[model]
+            for col_idx, (emb, title) in enumerate(
+                ((emb_ref, col_titles[0]), (emb_man, col_titles[1]))
+            ):
+                ax = axes[row_idx, col_idx]
+                magnitudes, gap = diffusion_transition_eigenvalues(
+                    emb, k=k, n_eigs=n_eigs
+                )
+                x = np.arange(1, magnitudes.size + 1)
+                ax.plot(x, magnitudes, marker="o", markersize=3, linewidth=1.5)
+                ax.axhline(1.0, color="#888888", linestyle=":", linewidth=1.0)
+                ax.text(
+                    0.98,
+                    0.95,
+                    f"gap = {gap:.3f}",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=9,
+                )
+                if row_idx == 0:
+                    ax.set_title(title)
+                if col_idx == 0:
+                    ax.set_ylabel(model)
+                if row_idx == n_models - 1:
+                    ax.set_xlabel("Eigenvalue index")
+
+        for ax in axes[:, 1]:
+            ax.set_ylabel("")
+        fig.suptitle(
+            f"Diffusion transition eigenvalue decay (kNN graph, k={k}) — spectral gap = 1 − |λ₂|",
+            y=1.01,
+            fontsize=12,
+        )
+        fig.tight_layout()
+        return fig
+
+    def pairwise_l2_distances(emb, *, max_pairs=MAX_PAIRWISE_PAIRS, seed=EVAL_SEED):
+        emb = np.asarray(emb, dtype=np.float64)
+        n_cells = emb.shape[0]
+        if n_cells < 2:
+            return np.array([], dtype=np.float64)
+        i_idx, j_idx = _cap_upper_triangle_pairs(n_cells, max_pairs, seed)
+        return np.linalg.norm(emb[i_idx] - emb[j_idx], axis=1)
+
+    def pairwise_cosine_similarities(
+        emb, *, max_pairs=MAX_PAIRWISE_PAIRS, seed=EVAL_SEED
+    ):
+        emb = np.asarray(emb, dtype=np.float64)
+        norms = np.linalg.norm(emb, axis=1)
+        keep = norms > 0
+        emb = emb[keep]
+        norms = norms[keep]
+        n_cells = emb.shape[0]
+        if n_cells < 2:
+            return np.array([], dtype=np.float64)
+        normalized = emb / norms[:, None]
+        i_idx, j_idx = _cap_upper_triangle_pairs(n_cells, max_pairs, seed)
+        return np.sum(normalized[i_idx] * normalized[j_idx], axis=1)
+
+    def plot_pairwise_similarity_grid(
+        embedding_pairs,
+        *,
+        model_order,
+    ):
+        import seaborn as sns
+
+        n_models = len(model_order)
+        fig, axes = plt.subplots(
+            n_models, 2, figsize=(10, 2.6 * n_models), squeeze=False
+        )
+        ref_color = "#404040"
+        man_color = "#D55E00"
+        col_specs = (
+            (
+                "Pairwise L2 distance",
+                pairwise_l2_distances,
+                "L2 distance",
+            ),
+            (
+                "Pairwise cosine similarity",
+                pairwise_cosine_similarities,
+                "Cosine similarity",
+            ),
+        )
+
+        for row_idx, model in enumerate(model_order):
+            emb_ref, emb_man = embedding_pairs[model]
+            for col_idx, (title, metric_fn, xlabel) in enumerate(col_specs):
+                ax = axes[row_idx, col_idx]
+                ref_vals = metric_fn(emb_ref)
+                man_vals = metric_fn(emb_man)
+                sns.kdeplot(
+                    ref_vals,
+                    ax=ax,
+                    color=ref_color,
+                    fill=True,
+                    alpha=0.35,
+                    linewidth=1.5,
+                    label="reference",
+                )
+                sns.kdeplot(
+                    man_vals,
+                    ax=ax,
+                    color=man_color,
+                    fill=True,
+                    alpha=0.35,
+                    linewidth=1.5,
+                    label="manipulated",
+                )
+                if row_idx == 0:
+                    ax.set_title(title, fontsize=10)
+                if col_idx == 0:
+                    ax.set_ylabel(model)
+                if row_idx == n_models - 1:
+                    ax.set_xlabel(xlabel)
+                if row_idx == 0 and col_idx == 1:
+                    ax.legend(loc="upper right", fontsize=8, frameon=False)
+
+        fig.suptitle(
+            "Within-embedding pairwise geometry per model (reference vs manipulated KDE)",
+            y=1.02,
+            fontsize=12,
+        )
+        fig.tight_layout()
+        return fig
+
     def filter_divergence_metrics(
         metrics_df,
         *,
@@ -628,6 +807,8 @@ def _(
         plot_kl_distribution_grid,
         plot_kl_js_divergence,
         plot_kl_violin_across_t,
+        plot_pairwise_similarity_grid,
+        plot_spectral_gap_grid,
     )
 
 
@@ -910,6 +1091,54 @@ def _(mo):
 @app.cell
 def _(MODEL_ORDER, embedding_pairs, plot_embedding_pca_umap_grid, plt):
     plot_embedding_pca_umap_grid(
+        embedding_pairs,
+        model_order=MODEL_ORDER,
+    )
+    plt.gcf()
+    return
+
+
+@app.cell(hide_code=True)
+def _(DEFAULT_K, SPECTRAL_N_EIGENVALUES, mo):
+    mo.md(
+        f"""
+    ### Spectral gap and eigenvalue decay
+
+    Per model, eigenvalues of the **row-normalized kNN diffusion transition matrix**
+    (same PHATE-style graph as KL/JS metrics, **k = {DEFAULT_K}**). Left/right columns:
+    reference vs manipulated. Spectral gap = **1 − |λ₂|** (annotated). Showing the
+    top **{SPECTRAL_N_EIGENVALUES}** eigenvalue magnitudes by index.
+    """
+    )
+    return
+
+
+@app.cell
+def _(DEFAULT_K, MODEL_ORDER, embedding_pairs, plot_spectral_gap_grid, plt):
+    plot_spectral_gap_grid(
+        embedding_pairs,
+        model_order=MODEL_ORDER,
+        k=DEFAULT_K,
+    )
+    plt.gcf()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Pairwise L2 distance and cosine similarity
+
+    **Two columns** per model row (L2 distance, cosine similarity). Reference and
+    manipulated distributions are overlaid as **KDE** fills on the same axes to show
+    how within-embedding pairwise geometry shifts under downsample.
+    """)
+    return
+
+
+@app.cell
+def _(MODEL_ORDER, embedding_pairs, plot_pairwise_similarity_grid, plt):
+    plot_pairwise_similarity_grid(
         embedding_pairs,
         model_order=MODEL_ORDER,
     )

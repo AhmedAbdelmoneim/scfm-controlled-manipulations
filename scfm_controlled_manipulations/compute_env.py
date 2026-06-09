@@ -23,6 +23,10 @@ _SKLEARN_ENV_VARS = (
     "LOKY_MAX_CPU_COUNT",
 )
 
+# BLAS/OpenMP/sklearn only — excludes NUMBA_NUM_THREADS and scanpy n_jobs so Leiden/pynndescent
+# stay single-threaded (numba parallel is fixed at process init when NUMBA_NUM_THREADS=1).
+_BLAS_THREAD_ENV_VARS = _THREAD_ENV_VARS[:-1] + _SKLEARN_ENV_VARS  # drop NUMBA_NUM_THREADS
+
 
 def thread_limit_environ(*, threads_per_process: int = 1) -> dict[str, str]:
     """Environment overrides that pin each process to ``threads_per_process`` compute threads."""
@@ -64,6 +68,7 @@ def thread_limited(threads_per_process: int = 1) -> Iterator[None]:
     for key, value in new_env.items():
         prior[key] = os.environ.get(key)
         os.environ[key] = value
+    prior_n_jobs = _snapshot_scanpy_n_jobs()
     try:
         _configure_scanpy_jobs(threads_per_process)
         yield
@@ -73,6 +78,46 @@ def thread_limited(threads_per_process: int = 1) -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old
+        _restore_scanpy_n_jobs(prior_n_jobs)
+
+
+@contextmanager
+def blas_thread_limited(threads_per_process: int = 1) -> Iterator[None]:
+    """Temporarily raise BLAS/sklearn threads for sklearn kNN only (not numba/scanpy)."""
+    count = str(max(1, int(threads_per_process)))
+    prior: dict[str, str | None] = {}
+    new_env = dict.fromkeys(_BLAS_THREAD_ENV_VARS, count)
+    new_env["OMP_DYNAMIC"] = "FALSE"
+    new_env["MKL_DYNAMIC"] = "FALSE"
+    for key, value in new_env.items():
+        prior[key] = os.environ.get(key)
+        os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, old in prior.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+
+def _snapshot_scanpy_n_jobs() -> int | None:
+    try:
+        import scanpy as sc
+    except ImportError:
+        return None
+    return int(sc.settings.n_jobs)
+
+
+def _restore_scanpy_n_jobs(n_jobs: int | None) -> None:
+    if n_jobs is None:
+        return
+    try:
+        import scanpy as sc
+    except ImportError:
+        return
+    sc.settings.n_jobs = n_jobs
 
 
 def snapshot_environ(keys: Mapping[str, str]) -> dict[str, str | None]:

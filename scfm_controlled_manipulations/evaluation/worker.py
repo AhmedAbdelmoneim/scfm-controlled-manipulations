@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,14 +18,18 @@ from scfm_controlled_manipulations.evaluation.context import (
     load_dataset_context,
     load_model_context,
 )
+from scfm_controlled_manipulations.evaluation.disk_cache import read_pickle_cache, write_pickle_cache
 from scfm_controlled_manipulations.evaluation.intervention_job import evaluate_intervention
 from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
     compute_cell_batch_reference_rows,
 )
 from scfm_controlled_manipulations.evaluation.metrics_clustering import run_leiden_labels
+from scfm_controlled_manipulations.evaluation.metrics_knn import prewarm_reference_evaluation_disk_cache
 from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
     precompute_reference_stats_shift,
 )
+
+logger = logging.getLogger(__name__)
 
 _SHARED: SharedEvalContext | None = None
 
@@ -60,28 +67,6 @@ class SharedEvalContext:
     static_row_templates: list[list[dict[str, Any]]]
 
 
-def _warm_reference_leiden_cache(
-    *,
-    model_ctx: ModelEvaluateContext,
-    k_values: list[int],
-    distance_metrics: list[str],
-    leiden_resolutions: list[float],
-    seed: int,
-) -> None:
-    resolutions = sorted(set(float(r) for r in leiden_resolutions))
-    for metric in distance_metrics:
-        for k in k_values:
-            for resolution in resolutions:
-                run_leiden_labels(
-                    model_ctx.emb_ref,
-                    k=int(k),
-                    metric=metric,
-                    resolution=resolution,
-                    seed=seed,
-                    leiden_cache=model_ctx.leiden_cache,
-                )
-
-
 @dataclass(frozen=True)
 class SharedEvalPayload:
     """Pickle-friendly paths for spawn-based workers."""
@@ -105,11 +90,185 @@ class SharedEvalPayload:
     knn_alpha: float
     knn_bandwidth_k: int | None
     knn_n_null_permutations: int
+    bootstrap_path: str | None = None
+    worker_threads: int = 1
 
 
 def install_shared_context(ctx: SharedEvalContext | None) -> None:
     global _SHARED
     _SHARED = ctx
+
+
+def worker_bootstrap_path(cache_path: Path, *, model: str, fingerprint: str) -> Path:
+    return cache_path / f"worker_bootstrap_{model}_{fingerprint}.pkl"
+
+
+def worker_bootstrap_fingerprint(
+    *,
+    dataset_id: str,
+    model: str,
+    seed: int,
+    k_values: list[int],
+    trustworthiness_k_values: list[int],
+    distance_metrics: list[str],
+    diffusion_t_values: list[int],
+    leiden_resolutions: list[float],
+    knn_alpha: float,
+    knn_bandwidth_k: int | None,
+    knn_n_null_permutations: int,
+    cell_type_col: str | None,
+    batch_col: str | None,
+) -> str:
+    payload = {
+        "dataset_id": dataset_id,
+        "model": model,
+        "seed": seed,
+        "k_values": k_values,
+        "trustworthiness_k_values": trustworthiness_k_values,
+        "distance_metrics": distance_metrics,
+        "diffusion_t_values": diffusion_t_values,
+        "leiden_resolutions": leiden_resolutions,
+        "knn_alpha": knn_alpha,
+        "knn_bandwidth_k": knn_bandwidth_k,
+        "knn_n_null_permutations": knn_n_null_permutations,
+        "cell_type_col": cell_type_col,
+        "batch_col": batch_col,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return digest[:16]
+
+
+def write_worker_bootstrap(path: Path, shared: SharedEvalContext) -> None:
+    write_pickle_cache(path, shared)
+    logger.info("Wrote worker bootstrap snapshot to %s", path)
+
+
+def _rebind_knn_cache_after_unpickle(
+    *,
+    dataset_ctx: DatasetEvaluateContext,
+    model_ctx: ModelEvaluateContext,
+    distance_metrics: list[str],
+    k_values: list[int],
+    cache_path: Path,
+    dataset_id: str,
+    model: str,
+    knn_n_jobs: int,
+) -> None:
+    """Re-seed reference kNN entries with live matrix object ids (spawn unpickle invalidates ``id()`` keys)."""
+    if not k_values:
+        return
+    k_max = max(int(k) for k in k_values)
+    dataset_ctx.knn_cache._store.clear()
+    for space, mat in (("raw", dataset_ctx.raw_ref), ("embedding", model_ctx.emb_ref)):
+        for metric in distance_metrics:
+            dataset_ctx.knn_cache.warm_reference_from_disk(
+                mat,
+                space=space,
+                k_max=k_max,
+                metric=metric,
+                cache_dir=cache_path,
+                dataset_id=dataset_id,
+                model=model,
+                n_cells=dataset_ctx.n_cells,
+                knn_n_jobs=knn_n_jobs,
+            )
+
+
+def _rebind_leiden_cache_after_unpickle(model_ctx: ModelEvaluateContext) -> None:
+    """Remap Leiden label cache keys to the unpickled embedding matrix object id."""
+    old_labels = dict(model_ctx.leiden_cache._labels)
+    if not old_labels:
+        return
+    model_ctx.leiden_cache._labels.clear()
+    new_mat_id = id(model_ctx.emb_ref)
+    for (_old_id, metric, k, resolution, seed), labels in old_labels.items():
+        model_ctx.leiden_cache._labels[(new_mat_id, metric, k, resolution, seed)] = labels
+
+
+def load_worker_bootstrap(path: Path, *, knn_n_jobs: int = 1) -> SharedEvalContext:
+    shared = read_pickle_cache(path)
+    if not isinstance(shared, SharedEvalContext):
+        raise TypeError(f"Expected SharedEvalContext in {path}, got {type(shared)!r}")
+    _rebind_leiden_cache_after_unpickle(shared.model_ctx)
+    _rebind_knn_cache_after_unpickle(
+        dataset_ctx=shared.dataset_ctx,
+        model_ctx=shared.model_ctx,
+        distance_metrics=shared.distance_metrics,
+        k_values=shared.k_values,
+        cache_path=shared.cache_path,
+        dataset_id=shared.dataset_id,
+        model=shared.model,
+        knn_n_jobs=knn_n_jobs,
+    )
+    return shared
+
+
+def _warm_reference_leiden_cache(
+    *,
+    model_ctx: ModelEvaluateContext,
+    k_values: list[int],
+    distance_metrics: list[str],
+    leiden_resolutions: list[float],
+    seed: int,
+) -> None:
+    resolutions = sorted(set(float(r) for r in leiden_resolutions))
+    for metric in distance_metrics:
+        for k in k_values:
+            for resolution in resolutions:
+                run_leiden_labels(
+                    model_ctx.emb_ref,
+                    k=int(k),
+                    metric=metric,
+                    resolution=resolution,
+                    seed=seed,
+                    leiden_cache=model_ctx.leiden_cache,
+                )
+
+
+def _warm_reference_knn_cache(
+    *,
+    dataset_ctx: DatasetEvaluateContext,
+    model_ctx: ModelEvaluateContext,
+    k_values: list[int],
+    distance_metrics: list[str],
+    cache_path: Path,
+    dataset_id: str,
+    model: str,
+    diffusion_t_values: list[int],
+    knn_alpha: float,
+    knn_bandwidth_k: int | None,
+    knn_n_jobs: int,
+) -> None:
+    if not k_values:
+        return
+    k_max = max(int(k) for k in k_values)
+    prewarm_reference_evaluation_disk_cache(
+        cache_dir=cache_path,
+        dataset_id=dataset_id,
+        model=model,
+        raw_ref=dataset_ctx.raw_ref,
+        emb_ref=model_ctx.emb_ref,
+        n_cells=dataset_ctx.n_cells,
+        k_values=k_values,
+        distance_metrics=distance_metrics,
+        diffusion_t_values=diffusion_t_values,
+        alpha=knn_alpha,
+        bandwidth_k=knn_bandwidth_k,
+        knn_n_jobs=knn_n_jobs,
+    )
+    for space, mat in (("raw", dataset_ctx.raw_ref), ("embedding", model_ctx.emb_ref)):
+        for metric in distance_metrics:
+            dataset_ctx.knn_cache.warm_reference_from_disk(
+                mat,
+                space=space,
+                k_max=k_max,
+                metric=metric,
+                cache_dir=cache_path,
+                dataset_id=dataset_id,
+                model=model,
+                n_cells=dataset_ctx.n_cells,
+                knn_n_jobs=knn_n_jobs,
+            )
 
 
 def build_shared_context(
@@ -134,15 +293,26 @@ def build_shared_context(
     knn_alpha: float,
     knn_bandwidth_k: int | None,
     knn_n_null_permutations: int,
+    knn_build_threads: int = 1,
 ) -> SharedEvalContext:
     model_ctx = load_model_context(
         embeddings_root, model, ref_id, target_obs=dataset_ctx.obs.index
     )
-    if k_values:
-        k_max = max(int(k) for k in k_values)
-        for metric in distance_metrics:
-            dataset_ctx.knn_cache.neighbors(dataset_ctx.raw_ref, k_max, metric)
-            dataset_ctx.knn_cache.neighbors(model_ctx.emb_ref, k_max, metric)
+    _warm_reference_knn_cache(
+        dataset_ctx=dataset_ctx,
+        model_ctx=model_ctx,
+        k_values=k_values,
+        distance_metrics=distance_metrics,
+        cache_path=cache_path,
+        dataset_id=dataset_id,
+        model=model,
+        diffusion_t_values=diffusion_t_values,
+        knn_alpha=knn_alpha,
+        knn_bandwidth_k=knn_bandwidth_k,
+        knn_n_jobs=max(1, int(knn_build_threads)),
+    )
+    # Leiden uses scanpy/pynndescent/numba (must stay at 1 thread after process init).
+    apply_thread_limits(threads_per_process=1)
     _warm_reference_leiden_cache(
         model_ctx=model_ctx,
         k_values=k_values,
@@ -201,8 +371,22 @@ def build_shared_context(
 
 
 def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
-    """Spawn worker: load reference data and rebuild per-model caches."""
-    apply_thread_limits(threads_per_process=1)
+    """Spawn worker: load pre-built shared context from bootstrap (fast) or rebuild (fallback)."""
+    apply_thread_limits(threads_per_process=max(1, int(payload.worker_threads)))
+    bootstrap = payload.bootstrap_path
+    if bootstrap:
+        path = Path(bootstrap)
+        if path.is_file():
+            logger.debug("Worker loading bootstrap snapshot from %s", path)
+            install_shared_context(
+                load_worker_bootstrap(path, knn_n_jobs=max(1, int(payload.worker_threads)))
+            )
+            return
+        logger.warning(
+            "Worker bootstrap missing at %s; falling back to full context rebuild",
+            path,
+        )
+
     dataset_ctx = load_dataset_context(Path(payload.results_dir))
     shared = build_shared_context(
         dataset_ctx=dataset_ctx,
@@ -225,6 +409,7 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
         knn_alpha=payload.knn_alpha,
         knn_bandwidth_k=payload.knn_bandwidth_k,
         knn_n_null_permutations=payload.knn_n_null_permutations,
+        knn_build_threads=1,
     )
     install_shared_context(shared)
 
