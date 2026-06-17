@@ -21,6 +21,7 @@ import yaml
 
 from scfm_controlled_manipulations import interventions
 from scfm_controlled_manipulations.evaluation.run import run_evaluate
+from scfm_controlled_manipulations.evaluation.run_scib import run_evaluate_scib
 from scfm_controlled_manipulations.io import (
     intervention_id,
     manipulation_path,
@@ -495,9 +496,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_ev = sub.add_parser(
         "evaluate",
-        help="Structure metrics (raw + embedding) vs reference for each manipulation",
+        help="Structure metrics (embedding) vs reference for each manipulation",
     )
     p_ev.add_argument("--config", type=Path, required=True)
+
+    p_scib = sub.add_parser(
+        "evaluate-scib",
+        help="scIB bio/batch metrics on reference embedding only (separate CSV)",
+    )
+    p_scib.add_argument("--config", type=Path, required=True)
     return parser
 
 
@@ -507,6 +514,9 @@ def _run_command(command: str, cfg: dict[str, Any]) -> None:
         return
     if command == "evaluate":
         run_evaluate(cfg)
+        return
+    if command == "evaluate-scib":
+        run_evaluate_scib(cfg)
         return
     raise ValueError(f"Unsupported command: {command}")
 

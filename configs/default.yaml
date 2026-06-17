@@ -42,26 +42,24 @@ reference_intervention_id: reference
 
 models: [pca, scgpt, geneformer, scfoundation, scimilarity, scconcept]
 
-# Structure evaluation (``make evaluate``): paired raw + embedding vs reference per manipulation.
+# Structure evaluation (``make evaluate``): paired embedding vs reference per manipulation.
+# scIB bio/batch metrics are separate: ``make evaluate-scib`` (reference embedding only).
 evaluation:
   k_values: [5, 15, 50]
-  trustworthiness_k_values: [5, 15, 30, 50, 100]
   distance_metrics: [euclidean]
-  diffusion_t_values: [1, 2, 4, 8, 16, 32]
   leiden_resolutions: [0.25, 0.5, 1.0, 2.0]
   cell_type_col: cell_type
   batch_col: batch
   dataset_id: null
   # Process pool size. Workers load a bootstrap snapshot built in the main process (spawn).
-  evaluation_workers: 48
-  # BLAS/sklearn threads for one-time reference setup in the main process (kNN graph build).
+  evaluation_workers: 8
+  # BLAS/sklearn threads for one-time reference setup in the main process (Leiden on reference).
   evaluation_setup_threads: 1
   # BLAS/sklearn threads inside each spawned worker during intervention metrics.
   evaluation_worker_threads: 1
   # Within-ref / within-man pairwise spread only (cell subsample then all-pairs).
   stats_shift_pairwise_cell_subsample_n: 500
   stats_shift_pairwise_max_pairs: 10000
-  # PHATE-style diffusion kernel (alpha=2 approximates Gaussian); clear evaluation_cache after changes
-  knn_alpha: 10.0
-  knn_bandwidth_k: null
-  knn_n_null_permutations: 1
+  # Used by ``make evaluate-scib`` only (not ``make evaluate``).
+  scib_benchmark_n_jobs: 1
+  distance_correlation_subsample_n: null

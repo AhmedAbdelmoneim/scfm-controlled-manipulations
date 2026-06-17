@@ -192,13 +192,21 @@ def load_metrics_from_legacy(
     """Load CSV metrics and join sweep params from manipulation h5ads."""
     ev = dataset_root / "results" / "evaluation"
 
-    csv_paths = sorted(ev.glob("*_metrics.csv"))
+    csv_paths = sorted(
+        p for p in ev.glob("*_metrics.csv") if "_scib_metrics" not in p.stem
+    )
+    scib_paths = sorted(ev.glob("*_scib_metrics.csv"))
     if models is not None:
         model_set = set(models)
         csv_paths = [p for p in csv_paths if p.stem.removesuffix("_metrics") in model_set]
+        scib_paths = [
+            p for p in scib_paths if p.stem.removesuffix("_scib_metrics") in model_set
+        ]
 
     frames: list[pd.DataFrame] = []
     for path in csv_paths:
+        frames.append(pd.read_csv(path))
+    for path in scib_paths:
         frames.append(pd.read_csv(path))
     if not frames:
         return pd.DataFrame()
@@ -296,7 +304,10 @@ def export_dataset_bundle(
     ev = dataset_root / "results" / "evaluation"
     source_files = {
         p.name: int(p.stat().st_mtime_ns)
-        for p in sorted(ev.glob("*_metrics.csv"))
+        for p in sorted(
+            list(ev.glob("*_metrics.csv")) + list(ev.glob("*_scib_metrics.csv"))
+        )
+        if p.is_file()
     }
     manifest = {
         "dataset_id": dataset_id,

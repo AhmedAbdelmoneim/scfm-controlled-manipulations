@@ -91,8 +91,7 @@ def filter_for_dashboard_metric(
     """Filter to one dashboard metric and model list.
 
     When ``pin_hyperparameters`` is False (Set 1 sweeps), keep the sweep dimension on the
-    x-axis (all ``diffusion_t`` for KL/JS, all ``k`` for kNN recall) and pin the other
-    hyperparameter. When True (Set 2), pin both to a single value.
+    x-axis and pin other hyperparameters. When True (Set 2), pin hyperparameters to defaults.
     """
     sub = metrics_df[
         (metrics_df["metric_category"] == spec.metric_category)
@@ -100,10 +99,7 @@ def filter_for_dashboard_metric(
         & (metrics_df["space"] == spec.space)
         & (metrics_df["model"].astype(str).isin(models))
     ].copy()
-    pin_k = True
-    if not pin_hyperparameters and spec.metric_name in {"knn_recall", "trustworthiness"}:
-        pin_k = False
-    if pin_k and spec.default_k is not None and "k" in sub.columns:
+    if spec.default_k is not None and "k" in sub.columns:
         k_vals = sub["k"].dropna().unique()
         if len(k_vals):
             target = spec.default_k
@@ -134,19 +130,6 @@ def _sort_numeric_str_labels(values) -> list[str]:
 
 def _set1_x_col(spec: DashboardMetric, sub: pd.DataFrame) -> str:
     """Sweep dimension plotted on the x-axis within each Set 1 cell."""
-    if (
-        spec.metric_category == "knn_metrics"
-        and spec.metric_name.startswith("diffusion")
-        and "diffusion_t" in sub.columns
-        and sub["diffusion_t"].notna().any()
-    ):
-        return "diffusion_t"
-    if (
-        spec.metric_name in {"knn_recall", "trustworthiness"}
-        and "k" in sub.columns
-        and sub["k"].notna().any()
-    ):
-        return "k"
     if spec.x_col == "resolution" and "resolution" in sub.columns:
         return "resolution"
     return "param_value"
@@ -194,12 +177,20 @@ def prepare_set1_grid(
     )
 
 
+SET2_SCIB_METRICS: tuple[tuple[str, str, str], ...] = (
+    ("silhouette_label", "silhouette_score", "Silhouette label"),
+    ("graph_connectivity", "graph_connectivity_score", "Graph connectivity"),
+    ("ilisi_knn", "ilisi_score", "iLISI"),
+    ("clisi_knn", "clisi_score", "cLISI"),
+)
+
+
 def prepare_set2_correlation(
     metrics_df: pd.DataFrame,
     spec: DashboardMetric,
     models: list[str],
 ) -> pd.DataFrame:
-    """Wide table: cell_type_asw, graph_connectivity, batch_ilisi, selected metric mean per run."""
+    """Wide table: primary scIB scores + selected metric mean per run."""
     metric_sub = filter_for_dashboard_metric(metrics_df, spec, models)
     metric_sub = metric_sub[~metric_sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
     if spec.x_col == "resolution":
@@ -222,31 +213,43 @@ def prepare_set2_correlation(
     metric_wide = metric_sub.groupby(keys, observed=True)["value_mean"].mean().reset_index()
     metric_wide = metric_wide.rename(columns={"value_mean": "metric_score"})
 
-    cb = metrics_df[
-        (metrics_df["metric_category"] == "cell_type_and_batch_metrics")
-        & (metrics_df["space"] == "embedding_manipulated")
+    scib = metrics_df[
+        metrics_df["metric_category"].isin(
+            ("bio_conservation_metrics", "batch_correction_metrics")
+        )
         & (metrics_df["model"].astype(str).isin(models))
     ]
-    cb = cb[~cb["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
+    scib_ref = scib[
+        (scib["space"] == "embedding_reference")
+        & (scib["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES))
+    ]
+    if not scib_ref.empty:
+        scib = scib_ref
+        scib_keys = ["model"]
+    else:
+        # Legacy rows from main evaluate (per-manipulation embedding_manipulated).
+        scib = scib[
+            (scib["space"] == "embedding_manipulated")
+            & (~scib["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES))
+        ]
+        scib_keys = keys
 
     def _pivot_score(metric_name: str, col: str) -> pd.DataFrame:
-        part = cb[cb["metric_name"] == metric_name]
+        part = scib[scib["metric_name"] == metric_name]
         if part.empty:
-            return pd.DataFrame(columns=keys + [col])
+            return pd.DataFrame(columns=scib_keys + [col])
         return (
-            part.groupby(keys, observed=True)["value_mean"]
+            part.groupby(scib_keys, observed=True)["value_mean"]
             .mean()
             .reset_index()
             .rename(columns={"value_mean": col})
         )
 
-    cell = _pivot_score("cell_type_asw", "cell_type_score")
-    connectivity = _pivot_score("graph_connectivity", "graph_connectivity_score")
-    batch = _pivot_score("batch_ilisi", "batch_score")
     wide = metric_wide
-    for extra in (cell, connectivity, batch):
+    for metric_name, col, _title in SET2_SCIB_METRICS:
+        extra = _pivot_score(metric_name, col)
         if not extra.empty:
-            wide = wide.merge(extra, on=keys, how="left")
+            wide = wide.merge(extra, on=scib_keys, how="left")
     return wide
 
 
@@ -288,7 +291,7 @@ def prepare_set3_embedding(
     metrics_df: pd.DataFrame,
     models: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Collapse (within_man, raw) and shift (paired_cell / ref within-cluster distance)."""
+    """Collapse within-man and shift (paired_cell / ref within-cluster distance)."""
     sub = metrics_df[
         (metrics_df["metric_category"] == SET3_CATEGORY)
         & (metrics_df["space"] == SET3_SPACE)

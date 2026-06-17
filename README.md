@@ -29,16 +29,24 @@ results/
   manipulations/{intervention_id}.h5ad
   manipulations/hvg.txt
   evaluation/{model}_metrics.csv    # written by evaluate
+  evaluation/{model}_scib_metrics.csv  # written by evaluate-scib (optional)
 ```
 
 ```bash
 make evaluate
 ```
 
+Optional reference-only scIB bio/batch metrics (separate CSV, not run per manipulation):
+
+```bash
+make evaluate-scib
+```
+
 | Command | Purpose | Main outputs |
 |---------|---------|--------------|
 | `make manipulate` | Run interventions on `input_h5ad` | `results_dir/manipulations/*.h5ad`, `reference.h5ad`, `hvg.txt` |
-| `make evaluate` | Structure metrics (stats, shift, kNN+diffusion, clustering, cell/batch) | `results_dir/evaluation/{model}_metrics.csv` |
+| `make evaluate` | Structure metrics (stats, shift, kNN+diffusion, clustering) | `results_dir/evaluation/{model}_metrics.csv` |
+| `make evaluate-scib` | scIB bio/batch metrics on reference embedding only | `results_dir/evaluation/{model}_scib_metrics.csv` |
 
 Both use the same `CONFIG` (default `configs/default.yaml`). Evaluation hyperparameters live under
 the top-level `evaluation:` key (see `configs/default.yaml`). Diffusion transitions are cached under
@@ -80,46 +88,41 @@ per-dimension / per-pair) array: mean, median, sample std, min, max, and quantil
 Global metrics (silhouette, Leiden ARI) set quantiles and often `value_std` to `NaN`.
 Classifier metrics use `value_mean` / `value_std` as CV mean ± std.
 
-**Gain rows:** Categories `embedding_shift_gain`, `knn_metrics_gain`, and `clustering_metrics_gain`
-append embedding-minus-raw differences for all summary columns except `value_std` (left `NaN`).
-
-**Permutation nulls:** `knn_recall`, `diffusion_sym_kl`, and `diffusion_js` include broken-pairing
-nulls in `null_value` (mean over cells; optional multi-shuffle average via `knn_n_null_permutations`).
-Diffusion uses a PHATE-style
-alpha-decay kNN kernel (`knn_alpha`, default 10); set `knn_alpha: 2` for a Gaussian-like kernel.
-Clear `results/evaluation_cache/` after changing diffusion kernel settings.
-
 ### Evaluation metrics (by category)
 
 | Category | Space(s) | Metric | Description |
 |----------|----------|--------|-------------|
-| `embedding_stats` | `raw`, `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution |
-| | | `col_mean_ref` / `_man` | Per-gene / per-dim mean distribution |
-| | | `col_variance_ref` / `_man` | Per-gene / per-dim variance distribution |
-| `embedding_shift` | `raw`, `embedding` | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (all aligned cells) |
+| `embedding_stats` | `embedding` | `mean_row_l2_norm_ref` / `_man` | Per-cell L2 norm distribution |
+| | | `col_mean_ref` / `_man` | Per-dimension mean distribution |
+| | | `col_variance_ref` / `_man` | Per-dimension variance distribution |
+| `embedding_shift` | `embedding` | `paired_cell_l2_norm` | Per-cell \|\|man − ref\|\|₂ (all aligned cells) |
 | | | `shift_pairwise_cosine` | Subsampled cos(shift_i, shift_j) for shift_i = man_i − ref_i |
 | | | `within_ref_pairwise_l2` | Subsampled all-pairs spread in reference |
 | | | `within_man_pairwise_l2` | Same cell subset, all-pairs spread in manipulation |
-| `knn_metrics` | `raw`, `embedding` | `knn_recall` | kNN neighborhood recall vs reference (+ permutation null) |
-| | `embedding` | `diffusion_sym_kl` | Symmetric KL between PHATE-style kNN random-walk transitions (+ null) |
-| | | `diffusion_js` | Jensen–Shannon divergence between transitions (+ null) |
+| | | `global_distance_correlation` | Pearson r between upper-triangle `pdist` vectors (ref vs man) |
+| `structure_metrics` | `embedding` | `viscore_local_sp`, `viscore_global_sp`, `distcorr`, `rnx_curve`, `intrinsic_dim_twonn` | ViScore, distance correlation, co-ranking, intrinsic dimension |
 | `clustering_metrics` | `embedding` | `leiden_ari` | ARI between independent Leiden clusterings (ref vs manip) |
-| `cell_type_and_batch_metrics` | `embedding_reference`, `embedding_manipulated` | `cell_type_asw` | Cell-type silhouette ([scib-metrics](https://scib-metrics.readthedocs.io/); requires `cell_type_col`) |
-| | | `graph_connectivity` | Per–cell-type kNN subgraph connectivity (scib-metrics; requires `cell_type_col`) |
-| | | `batch_ilisi` | Batch iLISI — local batch mixing (scib-metrics; requires `batch_col`) |
 
-iLISI builds a kNN graph with [scib-metrics](https://scib-metrics.readthedocs.io/) (`pynndescent`; cosine uses L2-normalized embeddings).
+scIB bio/batch metrics (`bio_conservation_metrics`, `batch_correction_metrics`) are **not** part of
+`make evaluate`. Run `make evaluate-scib` to write them to `{model}_scib_metrics.csv` for the
+reference embedding only (`space`: `embedding_reference`). Metrics include
+`isolated_labels`, `silhouette_label`, `clisi_knn`, `nmi_ari_cluster_labels_*`, `bras`, `ilisi_knn`,
+`kbet_per_label`, `graph_connectivity`, `pcr_comparison`.
 
-Configurable under `evaluation:`: `k_values`, `distance_metrics`, `diffusion_t_values`,
-`knn_alpha`, `knn_bandwidth_k`, `knn_n_null_permutations`, `leiden_resolutions`,
-`cell_type_col`, `batch_col`, `dataset_id`,
-`stats_shift_pairwise_cell_subsample_n`, `stats_shift_pairwise_max_pairs`.
+scIB uses [scib-metrics Benchmarker](https://scib-metrics.readthedocs.io/) on count matrix
+`X` and `obsm["embedding"]`; requires both `cell_type_col` and `batch_col` in reference `obs`.
+
+Configurable under `evaluation:`: `k_values` (Leiden graph), `distance_metrics`,
+`leiden_resolutions`, `cell_type_col`, `batch_col`, `dataset_id`, `scib_benchmark_n_jobs` (scIB only),
+`stats_shift_pairwise_cell_subsample_n`, `stats_shift_pairwise_max_pairs`,
+`distance_correlation_subsample_n` (defaults to pairwise cell subsample when null).
 
 To run a different config:
 
 ```bash
 make manipulate CONFIG=configs/my-run.yaml
 make evaluate CONFIG=configs/my-run.yaml
+make evaluate-scib CONFIG=configs/my-run.yaml
 ```
 
 Interventions are configured as YAML entries with a registry `name` and optional `kwargs`:
