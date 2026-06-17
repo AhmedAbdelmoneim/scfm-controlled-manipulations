@@ -13,28 +13,23 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
 
 from scfm_controlled_manipulations.evaluation.data import (
     AlignedBundle,
-    _as_float_csr,
-    assert_obs_aligned,
+    assert_obs_same_set,
     dense_embedding_aligned_to_obs,
     read_h5ad_for_eval,
 )
-from scfm_controlled_manipulations.evaluation.knn_cache import KnnIndexCache
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.io import embedding_path
 
 
 @dataclass
 class DatasetEvaluateContext:
-    """Reference raw matrix and obs shared by all models for one dataset."""
+    """Reference obs shared by all models for one dataset."""
 
-    raw_ref: sp.csr_matrix
     obs: pd.DataFrame
     n_cells: int
-    knn_cache: KnnIndexCache = field(default_factory=KnnIndexCache)
 
 
 @dataclass
@@ -47,13 +42,11 @@ class ModelEvaluateContext:
 
 
 def load_dataset_context(results_dir: Path) -> DatasetEvaluateContext:
-    raw_ref_path = results_dir / "manipulations" / "reference.h5ad"
-    ad_raw_ref = read_h5ad_for_eval(raw_ref_path)
-    raw_ref = _as_float_csr(ad_raw_ref.X)
+    ref_path = results_dir / "manipulations" / "reference.h5ad"
+    ad_ref = read_h5ad_for_eval(ref_path)
     return DatasetEvaluateContext(
-        raw_ref=raw_ref,
-        obs=ad_raw_ref.obs.copy(),
-        n_cells=int(raw_ref.shape[0]),
+        obs=ad_ref.obs.copy(),
+        n_cells=int(ad_ref.n_obs),
     )
 
 
@@ -79,18 +72,14 @@ def load_intervention_bundle(
     model: str,
     intervention_id: str,
 ) -> AlignedBundle:
-    """Load only manipulation matrices; reuse cached reference matrices from context."""
-    raw_man_path = results_dir / "manipulations" / f"{intervention_id}.h5ad"
-    ad_raw_man = read_h5ad_for_eval(raw_man_path)
+    """Load manipulation embedding; reuse cached reference embedding from context."""
     ad_emb_man = read_h5ad_for_eval(embedding_path(embeddings_root, model, intervention_id))
 
     target_obs = dataset_ctx.obs.index
-    assert_obs_aligned(target_obs, ad_raw_man.obs_names, "raw_ref", "raw_man")
+    assert_obs_same_set(target_obs, ad_emb_man.obs_names, "emb_ref", "emb_man")
     emb_man = dense_embedding_aligned_to_obs(ad_emb_man, target_obs, label="emb_man")
 
     return AlignedBundle(
-        raw_ref=dataset_ctx.raw_ref,
-        raw_man=_as_float_csr(ad_raw_man.X),
         emb_ref=model_ctx.emb_ref,
         emb_man=emb_man,
         obs=dataset_ctx.obs,

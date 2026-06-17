@@ -21,12 +21,18 @@ T = TypeVar("T")
 
 
 def read_pickle_cache(path: Path) -> T:
-    """Load a pickle written by :func:`load_or_build_pickle`."""
+    """Load a pickle written by :func:`load_or_build_pickle` or :func:`write_pickle_cache`."""
     with open(path, "rb") as handle:
         return pickle.load(handle)
 
 
+def write_pickle_cache(path: Path, value: T) -> None:
+    """Atomically write a pickle (e.g. worker bootstrap snapshots)."""
+    _write_pickle_atomic(path, value)
+
+
 def _write_pickle_atomic(path: Path, value: T) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.stem}_", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as tmp_handle:

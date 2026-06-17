@@ -64,15 +64,29 @@ CONFIG ?= configs/default.yaml
 manipulate:
 	uv run python -m scfm_controlled_manipulations.pipeline manipulate --config $(CONFIG)
 
-## Paired structure metrics (raw + embedding vs reference) into results_dir/evaluation
+## Paired structure metrics (embedding vs reference) into results_dir/evaluation
 .PHONY: evaluate
 evaluate:
 	@scripts/run_evaluate.sh $(CONFIG)
+
+## Reference-only scIB bio/batch metrics into results_dir/evaluation/{model}_scib_metrics.csv
+.PHONY: evaluate-scib
+evaluate-scib:
+	@scripts/run_evaluate_scib.sh $(CONFIG)
 
 ## Profile evaluate on a synthetic fixture (see scripts/benchmark_eval.py)
 .PHONY: benchmark-eval
 benchmark-eval:
 	uv run python scripts/benchmark_eval.py --config configs/experiments/atlases.yaml
+
+## Validate manipulation h5ads for embedding (raw counts in X, gene/Ensembl metadata)
+.PHONY: validate-embed-inputs
+validate-embed-inputs:
+	uv run python scripts/validate_embed_inputs.py \
+		--dir "$(or $(MANIPULATIONS_DIR),$(CURDIR)/results/manipulations)" \
+		$(if $(CONFIG),--config $(CONFIG),) \
+		$(if $(FM_REPO),--fm-repo $(FM_REPO),) \
+		$(foreach spec,$(GENE_LIST),--gene-list $(spec))
 
 ## Run unit tests
 .PHONY: test

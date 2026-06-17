@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import time
-from typing import Any
 
 import pandas as pd
 
@@ -14,16 +13,12 @@ from scfm_controlled_manipulations.evaluation.context import (
     ModelEvaluateContext,
     load_intervention_bundle,
 )
-from scfm_controlled_manipulations.evaluation.knn_cache import KnnIndexCache
-from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-    compute_cell_type_and_batch_metrics,
-)
 from scfm_controlled_manipulations.evaluation.metrics_clustering import compute_clustering_metrics
-from scfm_controlled_manipulations.evaluation.metrics_knn import compute_knn_metrics
 from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
     compute_embedding_shift,
     compute_embedding_stats,
 )
+from scfm_controlled_manipulations.evaluation.metrics_structure import compute_structure_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +38,10 @@ def evaluate_intervention(
     seed: int,
     k_values: list[int],
     distance_metrics: list[str],
-    diffusion_t_values: list[int],
     leiden_resolutions: list[float],
     cache_path: Path,
-    knn_cache: KnnIndexCache,
-    cell_type_col: str | None,
-    batch_col: str | None,
-    static_row_templates: list[list[dict[str, Any]]],
     stats_shift_pairwise_max_pairs: int | None = None,
-    knn_alpha: float = 10.0,
-    knn_bandwidth_k: int | None = None,
-    knn_n_null_permutations: int = 1,
+    distance_correlation_subsample_n: int | None = None,
 ) -> list[pd.DataFrame]:
     job_started = time.perf_counter()
     logger.info(
@@ -122,6 +110,8 @@ def evaluate_intervention(
             seed=seed,
             ref_cache=model_ctx.ref_stats_cache,
             pairwise_max_pairs=stats_shift_pairwise_max_pairs,
+            distance_correlation_subsample_n=distance_correlation_subsample_n,
+            distance_metrics=distance_metrics,
         )
     )
     logger.info(
@@ -134,25 +124,17 @@ def evaluate_intervention(
 
     t0 = time.perf_counter()
     frames.append(
-        compute_knn_metrics(
+        compute_structure_metrics(
             bundle=bundle,
             dataset_id=dataset_id,
             model=model,
             intervention_id=iid,
             intervention_name=name,
             seed=seed,
-            distance_metrics=distance_metrics,
-            k_values=k_values,
-            diffusion_t_values=diffusion_t_values,
-            cache_dir=cache_path,
-            knn_cache=knn_cache,
-            alpha=knn_alpha,
-            bandwidth_k=knn_bandwidth_k,
-            n_null_permutations=knn_n_null_permutations,
         )
     )
     logger.info(
-        "  [%d/%d] %s — knn_metrics done (%.1fs)",
+        "  [%d/%d] %s — structure_metrics done (%.1fs)",
         int_index,
         n_planned,
         iid,
@@ -176,31 +158,7 @@ def evaluate_intervention(
         )
     )
     logger.info(
-        "  [%d/%d] %s — clustering_metrics done (%.1fs)",
-        int_index,
-        n_planned,
-        iid,
-        time.perf_counter() - t0,
-    )
-
-    t0 = time.perf_counter()
-    frames.append(
-        compute_cell_type_and_batch_metrics(
-            bundle=bundle,
-            dataset_id=dataset_id,
-            model=model,
-            intervention_id=iid,
-            intervention_name=name,
-            seed=seed,
-            cell_type_col=cell_type_col,
-            batch_col=batch_col,
-            k_values=k_values,
-            distance_metrics=distance_metrics,
-            static_row_templates=static_row_templates or None,
-        )
-    )
-    logger.info(
-        "  [%d/%d] %s — cell_type_and_batch_metrics done (%.1fs); intervention total %.1fs",
+        "  [%d/%d] %s — clustering_metrics done (%.1fs); intervention total %.1fs",
         int_index,
         n_planned,
         iid,

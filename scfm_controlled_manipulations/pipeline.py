@@ -21,10 +21,12 @@ import yaml
 
 from scfm_controlled_manipulations import interventions
 from scfm_controlled_manipulations.evaluation.run import run_evaluate
+from scfm_controlled_manipulations.evaluation.run_scib import run_evaluate_scib
 from scfm_controlled_manipulations.io import (
     intervention_id,
     manipulation_path,
 )
+from scfm_controlled_manipulations.qc import filter_zero_count_cells
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
 logger = logging.getLogger(__name__)
@@ -335,6 +337,7 @@ def _init_worker_adata(input_path: str, options: Mapping[str, Any]) -> None:
         gene_name_column=str(options.get("gene_name_column", "gene_name")),
         ensembl_id_column=str(options.get("ensembl_id_column", "ensembl_id")),
     )
+    filter_zero_count_cells(_WORKER_ADATA)
     logger.debug(
         "Worker loaded input AnnData with %d cells and %d genes",
         _WORKER_ADATA.n_obs,
@@ -383,6 +386,7 @@ def _prepare_reference_phase(
         gene_name_column=str(output_options["gene_name_column"]),
         ensembl_id_column=str(output_options["ensembl_id_column"]),
     )
+    filter_zero_count_cells(adata_in)
     logger.info("Loaded input AnnData with %d cells and %d genes", adata_in.n_obs, adata_in.n_vars)
     _write_embedding_inputs(adata_in, manip_dir, output_options)
     if prewarm_caches:
@@ -492,9 +496,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_ev = sub.add_parser(
         "evaluate",
-        help="Structure metrics (raw + embedding) vs reference for each manipulation",
+        help="Structure metrics (embedding) vs reference for each manipulation",
     )
     p_ev.add_argument("--config", type=Path, required=True)
+
+    p_scib = sub.add_parser(
+        "evaluate-scib",
+        help="scIB bio/batch metrics on reference embedding only (separate CSV)",
+    )
+    p_scib.add_argument("--config", type=Path, required=True)
     return parser
 
 
@@ -504,6 +514,9 @@ def _run_command(command: str, cfg: dict[str, Any]) -> None:
         return
     if command == "evaluate":
         run_evaluate(cfg)
+        return
+    if command == "evaluate-scib":
+        run_evaluate_scib(cfg)
         return
     raise ValueError(f"Unsupported command: {command}")
 

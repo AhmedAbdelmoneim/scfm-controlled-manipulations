@@ -293,5 +293,254 @@ def _(qc_df):
     return
 
 
+@app.function
+def plot_reference_and_manipulations_grid(
+    ref_path,
+    manipulation_paths_by_family,
+    ad,
+    sp,
+    plt,
+    np,
+    output_dir="manip_cell_gene_count_plots_grid",
+    random_seed=0,
+    rank_start=0,
+    rank_end=10,
+):
+    """
+    Combines reference and manipulations into a single plot.
+    Layout: 2 columns x 3 rows (6 panels - 1 reference and 5 manipulations).
+    Top left is reference cell, others are from manipulations (one per family).
+
+    Shows genes ranked rank_start:rank_end by expression in the reference cell,
+    looked up by gene identity (var_names) not position, so manipulations that
+    reorder genes are handled correctly.
+
+    For manipulation panels, overlays the reference at low opacity.
+    Y-axis is shared across all panels.
+    Saves as SVG and PNG.
+
+    ------
+    Why am I seeing no bars for the manipulations, only the reference?
+
+    This could happen if, for the genes being plotted (selected_gene_names),
+    there are *no corresponding genes* found in the manipulation AnnData's .var_names.
+    In this code, for each manipulation, the relevant cell's counts are indexed
+    by gene name, not by position. If a gene from the reference is not in the
+    manipulated .var_names, a zero will be inserted in its place:
+
+      manip_window = np.array([
+          manip_counts_full[name_to_idx[g]] if g in name_to_idx else 0.0
+          for g in selected_gene_names
+      ], dtype=float)
+
+    If all genes in selected_gene_names are missing in the manipulated file,
+    then manip_window will be all zeros -- so the reference bar (overlay)
+    will show, but not the manipulation.
+
+    Possible reasons for this:
+    - The manipulation process changed .var_names such that most or all of the
+      top N genes in the reference (used for plotting) are *not present*
+      in the manipulated files.
+    - There is a mismatch between gene name formats (e.g., Ensembl IDs vs gene symbols).
+    - The manipulated AnnData files have truncated, filtered, or otherwise reordered
+      .var_names so that the mapping by name fails for the reference's top genes.
+    - The assignment of selected_gene_names depends on the reference,
+      and if these gene names do not exist in the manip AnnData, the
+      result is zero bars.
+
+    How to debug:
+    - Print or check  selected_gene_names and manip_var_names in the function to ensure overlap.
+        print("selected_gene_names:", selected_gene_names)
+        print("manip_var_names:", manip_var_names)
+    - Print or check [g for g in selected_gene_names if g not in manip_var_names]
+      to see which genes are missing.
+    - Check if the manipulation process (upstream) changes the semantics or
+      format of .var_names or their order.
+    - Check that .var_names_make_unique() does not further alter/rename
+      gene names in a non-matching way.
+    - Ensure that the .h5ad files contain overlapping gene names, and that
+      their order and format is consistent.
+
+    ------
+    Parameters
+    ----------
+    ref_path : str or Path
+        Path to the reference .h5ad file.
+    manipulation_paths_by_family : dict
+        Mapping from family name to list of .h5ad file paths. Only the first
+        file per family is used.
+    ad, sp, plt, np : modules
+        anndata, scipy.sparse, matplotlib.pyplot, numpy.
+    output_dir : str
+        Output directory for saved figures.
+    random_seed : int
+        Seed for reproducible cell selection.
+    rank_start : int
+        Start of the gene rank window (0-indexed, descending expression order).
+        Default 0. The top genes (0:10) give the strongest visual contrast,
+        especially for gene_shuffle where the gradient is destroyed.
+    rank_end : int
+        End of the gene rank window (exclusive). Default 10.
+    """
+    import os
+    import warnings
+
+    COLOR_REF = "#155289"
+    COLOR_MANIP = "#A7455D"
+
+    rng = np.random.default_rng(random_seed)
+    os.makedirs(output_dir, exist_ok=True)
+
+    def read_and_unique(path, label):
+        adata = ad.read_h5ad(path, backed=None)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            adata.var_names_make_unique()
+        return adata
+
+    ref = read_and_unique(ref_path, "REF")
+    ref_var_names = np.array(ref.var_names)
+
+    n_cells_ref = ref.shape[0]
+    if n_cells_ref == 0:
+        raise ValueError("Reference AnnData has zero cells.")
+
+    i_cell_ref = int(rng.integers(0, n_cells_ref))
+
+    ref_counts_full = (
+        ref.X[i_cell_ref].toarray().ravel()
+        if sp.issparse(ref.X)
+        else np.asarray(ref.X[i_cell_ref]).ravel()
+    )
+
+    ranked = np.argsort(-ref_counts_full)
+    selected_positions = ranked[rank_start:rank_end]
+    selected_gene_names = list(ref_var_names[selected_positions])
+    ref_window = ref_counts_full[selected_positions]
+    n_genes = len(selected_gene_names)
+
+    families = [f for f in manipulation_paths_by_family if manipulation_paths_by_family[f]][:5]
+
+    panels = [{"counts": ref_window, "label": "Reference", "ref_overlay": None}]
+
+    for fam in families:
+        adata = read_and_unique(manipulation_paths_by_family[fam][0], fam)
+        manip_var_names = np.array(adata.var_names)
+        n_cells = adata.shape[0]
+
+        if n_cells == 0:
+            panels.append({
+                "counts": np.zeros(n_genes),
+                "label": f"{fam}\n(no cells)",
+                "ref_overlay": ref_window,
+            })
+            continue
+
+        i_cell = i_cell_ref if i_cell_ref < n_cells else int(rng.integers(0, n_cells))
+
+        manip_counts_full = (
+            adata.X[i_cell].toarray().ravel()
+            if sp.issparse(adata.X)
+            else np.asarray(adata.X[i_cell]).ravel()
+        )
+
+        # Index by gene name so gene_shuffle (which permutes values in-place,
+        # keeping var_names order) and any reordered var is handled correctly
+        if np.array_equal(manip_var_names, ref_var_names):
+            manip_window = manip_counts_full[selected_positions]
+        else:
+            name_to_idx = {g: i for i, g in enumerate(manip_var_names)}
+            manip_window = np.array([
+                manip_counts_full[name_to_idx[g]] if g in name_to_idx else 0.0
+                for g in selected_gene_names
+            ], dtype=float)
+
+        panels.append({"counts": manip_window, "label": fam, "ref_overlay": ref_window})
+
+    all_values = np.concatenate(
+        [p["counts"] for p in panels]
+        + [p["ref_overlay"] for p in panels if p["ref_overlay"] is not None]
+    )
+    ymin, ymax = float(all_values.min()), float(all_values.max())
+    ypad = max(1.0, 0.05 * (ymax - ymin))
+    ylim = (ymin - ypad, ymax + ypad)
+
+    fig, axes = plt.subplots(3, 2, figsize=(8, 6), sharey=True)
+    axes_flat = axes.flatten()
+    bar_x = np.arange(n_genes)
+    width = 0.85
+
+    for idx, panel in enumerate(panels):
+        ax = axes_flat[idx]
+        if panel["ref_overlay"] is not None:
+            ax.bar(bar_x, panel["ref_overlay"], width=width,
+                   color=COLOR_REF, alpha=0.18, linewidth=0, zorder=0)
+        ax.bar(
+            bar_x, panel["counts"], width=width,
+            color=COLOR_REF if panel["ref_overlay"] is None else COLOR_MANIP,
+            alpha=0.7 if panel["ref_overlay"] is None else 0.92,
+            linewidth=0, zorder=1,
+        )
+        ax.set_xlim(-0.5, n_genes - 0.5)
+        ax.set_ylim(ylim)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        # Remove all spines for a clean look
+        for side, spine in ax.spines.items():
+            spine.set_visible(False)
+        ax.set_title(panel["label"], fontsize=11, pad=2)
+
+    for j in range(len(panels), 6):
+        axes_flat[j].axis("off")
+
+    # Reduce whitespace between grid elements and figure edges
+    fig.subplots_adjust(wspace=0.04, hspace=0.10, left=0.02, right=0.985, top=0.98, bottom=0.05)
+
+    basename = os.path.join(output_dir, "reference_vs_manipulation_grid")
+    fig.savefig(f"{basename}.png", dpi=160, bbox_inches="tight", pad_inches=0.01)
+    fig.savefig(f"{basename}.svg", bbox_inches="tight", pad_inches=0.01)
+    print(f"Saved: {basename}.png and .svg")
+
+    # If running in a notebook and want output inline, uncomment the next line:
+    # plt.show()
+
+    return fig
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Visualization of manipulations
+    """)
+    return
+
+
+@app.cell
+def _(MANIP_DIR, ad, np, plt, sp):
+    # Example usage: Provide explicit files/paths here
+    manipulation_files_by_family = {
+        "downsample": [f"{MANIP_DIR}/downsample_7725a8fbfa4f.h5ad"],
+        "gene_dropout": [f"{MANIP_DIR}/gene_dropout_f65ff3bc0ced.h5ad"],
+        "gene_shuffle": [f"{MANIP_DIR}/gene_shuffle_66757744a1cd.h5ad"],
+        "local_smoothing": [f"{MANIP_DIR}/local_smoothing_82382916c19d.h5ad"],
+        "poisson_resampling": [f"{MANIP_DIR}/poisson_resampling_14c1c037e87f.h5ad"],
+    }
+    # For full workflow, you would point to the actual file paths in the above dict.
+
+    # Call using these files and structure, seed can be set in the function call for reproducibility
+    plot_reference_and_manipulations_grid(
+        MANIP_DIR / "reference.h5ad",
+        manipulation_files_by_family,
+        ad,
+        sp,
+        plt,
+        np,
+        random_seed=1,
+        rank_start=1,
+        rank_end=10,
+    )
+    return
+
+
 if __name__ == "__main__":
     app.run()

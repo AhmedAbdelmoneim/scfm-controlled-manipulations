@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
+import logging
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -15,14 +17,17 @@ from scfm_controlled_manipulations.evaluation.context import (
     load_dataset_context,
     load_model_context,
 )
-from scfm_controlled_manipulations.evaluation.intervention_job import evaluate_intervention
-from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-    compute_cell_batch_reference_rows,
+from scfm_controlled_manipulations.evaluation.disk_cache import (
+    read_pickle_cache,
+    write_pickle_cache,
 )
+from scfm_controlled_manipulations.evaluation.intervention_job import evaluate_intervention
 from scfm_controlled_manipulations.evaluation.metrics_clustering import run_leiden_labels
 from scfm_controlled_manipulations.evaluation.reference_stats_shift import (
     precompute_reference_stats_shift,
 )
+
+logger = logging.getLogger(__name__)
 
 _SHARED: SharedEvalContext | None = None
 
@@ -47,16 +52,87 @@ class SharedEvalContext:
     seed: int
     k_values: list[int]
     distance_metrics: list[str]
-    diffusion_t_values: list[int]
     leiden_resolutions: list[float]
     cache_path: Path
-    cell_type_col: str | None
-    batch_col: str | None
     stats_shift_pairwise_max_pairs: int | None
-    knn_alpha: float
-    knn_bandwidth_k: int | None
-    knn_n_null_permutations: int
-    static_row_templates: list[list[dict[str, Any]]]
+    distance_correlation_subsample_n: int
+
+
+@dataclass(frozen=True)
+class SharedEvalPayload:
+    """Pickle-friendly paths for spawn-based workers."""
+
+    results_dir: str
+    embeddings_root: str
+    model: str
+    ref_id: str
+    dataset_id: str
+    seed: int
+    k_values: list[int]
+    distance_metrics: list[str]
+    leiden_resolutions: list[float]
+    cache_path: str
+    stats_shift_pairwise_cell_subsample_n: int
+    stats_shift_pairwise_max_pairs: int | None
+    distance_correlation_subsample_n: int
+    bootstrap_path: str | None = None
+    worker_threads: int = 1
+
+
+def install_shared_context(ctx: SharedEvalContext | None) -> None:
+    global _SHARED
+    _SHARED = ctx
+
+
+def worker_bootstrap_path(cache_path: Path, *, model: str, fingerprint: str) -> Path:
+    return cache_path / f"worker_bootstrap_{model}_{fingerprint}.pkl"
+
+
+def worker_bootstrap_fingerprint(
+    *,
+    dataset_id: str,
+    model: str,
+    seed: int,
+    k_values: list[int],
+    distance_metrics: list[str],
+    leiden_resolutions: list[float],
+    distance_correlation_subsample_n: int,
+) -> str:
+    payload = {
+        "dataset_id": dataset_id,
+        "model": model,
+        "seed": seed,
+        "k_values": k_values,
+        "distance_metrics": distance_metrics,
+        "leiden_resolutions": leiden_resolutions,
+        "distance_correlation_subsample_n": distance_correlation_subsample_n,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return digest[:16]
+
+
+def write_worker_bootstrap(path: Path, shared: SharedEvalContext) -> None:
+    write_pickle_cache(path, shared)
+    logger.info("Wrote worker bootstrap snapshot to %s", path)
+
+
+def _rebind_leiden_cache_after_unpickle(model_ctx: ModelEvaluateContext) -> None:
+    """Remap Leiden label cache keys to the unpickled embedding matrix object id."""
+    old_labels = dict(model_ctx.leiden_cache._labels)
+    if not old_labels:
+        return
+    model_ctx.leiden_cache._labels.clear()
+    new_mat_id = id(model_ctx.emb_ref)
+    for (_old_id, metric, k, resolution, seed), labels in old_labels.items():
+        model_ctx.leiden_cache._labels[(new_mat_id, metric, k, resolution, seed)] = labels
+
+
+def load_worker_bootstrap(path: Path) -> SharedEvalContext:
+    shared = read_pickle_cache(path)
+    if not isinstance(shared, SharedEvalContext):
+        raise TypeError(f"Expected SharedEvalContext in {path}, got {type(shared)!r}")
+    _rebind_leiden_cache_after_unpickle(shared.model_ctx)
+    return shared
 
 
 def _warm_reference_leiden_cache(
@@ -81,35 +157,6 @@ def _warm_reference_leiden_cache(
                 )
 
 
-@dataclass(frozen=True)
-class SharedEvalPayload:
-    """Pickle-friendly paths for spawn-based workers."""
-
-    results_dir: str
-    embeddings_root: str
-    model: str
-    ref_id: str
-    dataset_id: str
-    seed: int
-    k_values: list[int]
-    distance_metrics: list[str]
-    diffusion_t_values: list[int]
-    leiden_resolutions: list[float]
-    cache_path: str
-    cell_type_col: str | None
-    batch_col: str | None
-    stats_shift_pairwise_cell_subsample_n: int
-    stats_shift_pairwise_max_pairs: int | None
-    knn_alpha: float
-    knn_bandwidth_k: int | None
-    knn_n_null_permutations: int
-
-
-def install_shared_context(ctx: SharedEvalContext | None) -> None:
-    global _SHARED
-    _SHARED = ctx
-
-
 def build_shared_context(
     *,
     dataset_ctx: DatasetEvaluateContext,
@@ -121,25 +168,17 @@ def build_shared_context(
     seed: int,
     k_values: list[int],
     distance_metrics: list[str],
-    diffusion_t_values: list[int],
     leiden_resolutions: list[float],
     cache_path: Path,
-    cell_type_col: str | None,
-    batch_col: str | None,
     stats_shift_pairwise_cell_subsample_n: int,
     stats_shift_pairwise_max_pairs: int | None,
-    knn_alpha: float,
-    knn_bandwidth_k: int | None,
-    knn_n_null_permutations: int,
+    distance_correlation_subsample_n: int,
 ) -> SharedEvalContext:
     model_ctx = load_model_context(
         embeddings_root, model, ref_id, target_obs=dataset_ctx.obs.index
     )
-    if k_values:
-        k_max = max(int(k) for k in k_values)
-        for metric in distance_metrics:
-            dataset_ctx.knn_cache.neighbors(dataset_ctx.raw_ref, k_max, metric)
-            dataset_ctx.knn_cache.neighbors(model_ctx.emb_ref, k_max, metric)
+    # Leiden uses scanpy/pynndescent/numba (must stay at 1 thread after process init).
+    apply_thread_limits(threads_per_process=1)
     _warm_reference_leiden_cache(
         model_ctx=model_ctx,
         k_values=k_values,
@@ -154,23 +193,6 @@ def build_shared_context(
         pairwise_cell_subsample_n=stats_shift_pairwise_cell_subsample_n,
         pairwise_max_pairs=stats_shift_pairwise_max_pairs,
     )
-    static_row_templates: list[list[dict[str, Any]]] = []
-    if cell_type_col or batch_col:
-        static_row_templates.append(
-            compute_cell_batch_reference_rows(
-                mat=model_ctx.emb_ref,
-                obs_df=dataset_ctx.obs,
-                space_label="embedding_reference",
-                dataset_id=dataset_id,
-                model=model,
-                seed=seed,
-                cell_type_col=cell_type_col,
-                batch_col=batch_col,
-                k_values=k_values,
-                distance_metrics=distance_metrics,
-                n_cells=dataset_ctx.n_cells,
-            )
-        )
 
     return SharedEvalContext(
         dataset_ctx=dataset_ctx,
@@ -183,22 +205,28 @@ def build_shared_context(
         seed=seed,
         k_values=k_values,
         distance_metrics=distance_metrics,
-        diffusion_t_values=diffusion_t_values,
         leiden_resolutions=leiden_resolutions,
         cache_path=cache_path,
-        cell_type_col=cell_type_col,
-        batch_col=batch_col,
         stats_shift_pairwise_max_pairs=stats_shift_pairwise_max_pairs,
-        knn_alpha=knn_alpha,
-        knn_bandwidth_k=knn_bandwidth_k,
-        knn_n_null_permutations=knn_n_null_permutations,
-        static_row_templates=static_row_templates,
+        distance_correlation_subsample_n=distance_correlation_subsample_n,
     )
 
 
 def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
-    """Spawn worker: load reference data and rebuild per-model caches."""
-    apply_thread_limits(threads_per_process=1)
+    """Spawn worker: load pre-built shared context from bootstrap (fast) or rebuild (fallback)."""
+    apply_thread_limits(threads_per_process=max(1, int(payload.worker_threads)))
+    bootstrap = payload.bootstrap_path
+    if bootstrap:
+        path = Path(bootstrap)
+        if path.is_file():
+            logger.debug("Worker loading bootstrap snapshot from %s", path)
+            install_shared_context(load_worker_bootstrap(path))
+            return
+        logger.warning(
+            "Worker bootstrap missing at %s; falling back to full context rebuild",
+            path,
+        )
+
     dataset_ctx = load_dataset_context(Path(payload.results_dir))
     shared = build_shared_context(
         dataset_ctx=dataset_ctx,
@@ -210,16 +238,11 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
         seed=payload.seed,
         k_values=payload.k_values,
         distance_metrics=payload.distance_metrics,
-        diffusion_t_values=payload.diffusion_t_values,
         leiden_resolutions=payload.leiden_resolutions,
         cache_path=Path(payload.cache_path),
-        cell_type_col=payload.cell_type_col,
-        batch_col=payload.batch_col,
         stats_shift_pairwise_cell_subsample_n=payload.stats_shift_pairwise_cell_subsample_n,
         stats_shift_pairwise_max_pairs=payload.stats_shift_pairwise_max_pairs,
-        knn_alpha=payload.knn_alpha,
-        knn_bandwidth_k=payload.knn_bandwidth_k,
-        knn_n_null_permutations=payload.knn_n_null_permutations,
+        distance_correlation_subsample_n=payload.distance_correlation_subsample_n,
     )
     install_shared_context(shared)
 
@@ -242,15 +265,8 @@ def run_intervention_task(task: InterventionTask) -> list[pd.DataFrame]:
         seed=ctx.seed,
         k_values=ctx.k_values,
         distance_metrics=ctx.distance_metrics,
-        diffusion_t_values=ctx.diffusion_t_values,
         leiden_resolutions=ctx.leiden_resolutions,
         cache_path=ctx.cache_path,
-        knn_cache=ctx.dataset_ctx.knn_cache,
-        cell_type_col=ctx.cell_type_col,
-        batch_col=ctx.batch_col,
-        static_row_templates=ctx.static_row_templates,
         stats_shift_pairwise_max_pairs=ctx.stats_shift_pairwise_max_pairs,
-        knn_alpha=ctx.knn_alpha,
-        knn_bandwidth_k=ctx.knn_bandwidth_k,
-        knn_n_null_permutations=ctx.knn_n_null_permutations,
+        distance_correlation_subsample_n=ctx.distance_correlation_subsample_n,
     )

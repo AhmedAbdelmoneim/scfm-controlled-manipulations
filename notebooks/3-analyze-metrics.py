@@ -376,138 +376,6 @@ def _(MODEL_ORDER, np, pd, plt, sns):
             y=y,
         )
 
-    def plot_embedding_shift_gain_intervention(
-        df: pd.DataFrame, intervention_name: str, *, y: str = "value_mean"
-    ):
-        specs = [{"metric": m, "title": t} for m, t in _SHIFT_METRICS]
-        return plot_metric_grid_intervention(
-            df,
-            intervention_name,
-            "embedding_minus_raw",
-            specs,
-            2,
-            2,
-            f"{intervention_name} — embedding shift gain",
-            y=y,
-        )
-
-    def plot_knn_recall_intervention(
-        df: pd.DataFrame, intervention_name: str, space: str, *, y: str = "value_mean"
-    ):
-        inv_df = _inv_subset(df, intervention_name, space)
-        k_vals = sorted(inv_df["k"].dropna().unique())
-        if not k_vals:
-            return plot_metric_grid_intervention(
-                df, intervention_name, space, [], 1, 1, f"{intervention_name} — knn recall ({space})"
-            )
-        specs = [
-            {"metric": "knn_recall", "title": f"k = {int(k)}", "filter": {"k": k}}
-            for k in k_vals
-        ]
-        return plot_metric_grid_intervention(
-            df,
-            intervention_name,
-            space,
-            specs,
-            1,
-            len(k_vals),
-            f"{intervention_name} — knn recall ({space})",
-            y=y,
-            figsize=(4.5 * len(k_vals), 3.5),
-        )
-
-    def plot_knn_diffusion_intervention(
-        df: pd.DataFrame, intervention_name: str, space: str, *, y: str = "value_mean"
-    ):
-        """Per intervention: 2 rows (JS, KL), columns = sweep param, x = diffusion_t."""
-        inv_df = _inv_subset(df, intervention_name, space)
-        inv_df = inv_df[inv_df["metric_name"].isin(["diffusion_js", "diffusion_sym_kl"])].copy()
-        if inv_df.empty:
-            _fig, _ax = plt.subplots(figsize=(6, 3))
-            _ax.text(0.5, 0.5, "No data", ha="center", va="center")
-            _ax.set_axis_off()
-            return _fig
-
-        param_key = _xlabel_from_inv(inv_df, "param_value")
-        param_vals = _sort_param_values(inv_df["param_value"])
-        if not param_vals:
-            _fig, _ax = plt.subplots(figsize=(6, 3))
-            _ax.text(0.5, 0.5, "No param_value", ha="center", va="center")
-            _ax.set_axis_off()
-            return _fig
-
-        ncols = len(param_vals)
-        fig, axes = plt.subplots(2, ncols, figsize=(3.8 * ncols, 6.5), sharex=True)
-        if ncols == 1:
-            axes = np.array([[axes[0]], [axes[1]]])
-
-        metric_rows = [
-            ("diffusion_js", "Jensen–Shannon"),
-            ("diffusion_sym_kl", "Symmetric KL"),
-        ]
-
-        for row_idx, (metric, row_label) in enumerate(metric_rows):
-            for col_idx, pval in enumerate(param_vals):
-                ax = axes[row_idx, col_idx]
-                panel = inv_df[
-                    (inv_df["metric_name"] == metric) & (inv_df["param_value"] == pval)
-                ].copy()
-                panel["model"] = pd.Categorical(
-                    panel["model"], categories=MODEL_ORDER, ordered=True
-                )
-                panel = panel.sort_values("diffusion_t")
-                if panel.empty:
-                    ax.set_visible(False)
-                    continue
-                sns.lineplot(
-                    data=panel,
-                    x="diffusion_t",
-                    y=y,
-                    hue="model",
-                    ax=ax,
-                    marker="o",
-                    linewidth=2,
-                    palette="tab10",
-                    legend=False,
-                )
-                if row_idx == 0:
-                    ax.set_title(_format_param_value(pval, param_key))
-                ax.set_ylabel(row_label)
-                if row_idx == 1:
-                    ax.set_xlabel("diffusion_t")
-                else:
-                    ax.tick_params(labelbottom=False)
-
-        _add_model_legend(fig, inv_df, hue="model")
-        fig.suptitle(
-            f"{intervention_name} — diffusion ({space}) · columns = {param_key}",
-            y=1.06,
-            fontsize=12,
-        )
-        fig.tight_layout()
-        return fig
-
-    def plot_knn_gain_intervention(
-        df: pd.DataFrame, intervention_name: str, *, y: str = "value_mean"
-    ):
-        inv_df = _inv_subset(df, intervention_name, "embedding_minus_raw")
-        k_vals = sorted(inv_df["k"].dropna().unique())
-        specs = [
-            {"metric": "knn_recall", "title": f"k = {int(k)}", "filter": {"k": k}}
-            for k in k_vals
-        ]
-        return plot_metric_grid_intervention(
-            df,
-            intervention_name,
-            "embedding_minus_raw",
-            specs,
-            1,
-            max(1, len(k_vals)),
-            f"{intervention_name} — knn recall gain",
-            y=y,
-            figsize=(4.5 * max(1, len(k_vals)), 3.5),
-        )
-
     def plot_clustering_intervention(
         df: pd.DataFrame, intervention_name: str, *, y: str = "value_mean"
     ):
@@ -534,12 +402,8 @@ def _(MODEL_ORDER, np, pd, plt, sns):
     return (
         filter_metrics,
         plot_clustering_intervention,
-        plot_embedding_shift_gain_intervention,
         plot_embedding_shift_intervention,
         plot_embedding_stats_intervention,
-        plot_knn_diffusion_intervention,
-        plot_knn_gain_intervention,
-        plot_knn_recall_intervention,
     )
 
 
@@ -575,14 +439,14 @@ def _(filter_metrics, metrics_df):
         metrics_df,
         metric_category="embedding_stats",
         metric_names=_stats_names,
-        spaces=["raw", "embedding"],
+        spaces=["embedding"],
     )
     return (embedding_stats_df,)
 
 
 @app.cell
 def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_stats_intervention(embedding_stats_df, "downsample", _space)
     plt.gcf()
     return
@@ -590,7 +454,7 @@ def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
 
 @app.cell
 def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_stats_intervention(embedding_stats_df, "gene_dropout", _space)
     plt.gcf()
     return
@@ -598,7 +462,7 @@ def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
 
 @app.cell
 def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_stats_intervention(embedding_stats_df, "gene_shuffle", _space)
     plt.gcf()
     return
@@ -606,7 +470,7 @@ def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
 
 @app.cell
 def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_stats_intervention(embedding_stats_df, "local_smoothing", _space)
     plt.gcf()
     return
@@ -614,7 +478,7 @@ def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
 
 @app.cell
 def _(embedding_stats_df, plot_embedding_stats_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_stats_intervention(
             embedding_stats_df, "poisson_resampling", _space
         )
@@ -627,7 +491,7 @@ def _(mo):
     mo.md(r"""
     ### Embedding shift
 
-    **One figure per intervention** (`raw` and `embedding`). Each figure is a 2×2 panel: paired cell L2, shift pairwise cosine, within-ref pairwise L2, within-man pairwise L2. All models on every panel.
+    **One figure per intervention** (`embedding`). Each figure is a 2×2 panel: paired cell L2, shift pairwise cosine, within-ref pairwise L2, within-man pairwise L2. All models on every panel.
     """)
     return
 
@@ -644,14 +508,14 @@ def _(filter_metrics, metrics_df):
         metrics_df,
         metric_category="embedding_shift",
         metric_names=_shift_names,
-        spaces=["raw", "embedding"],
+        spaces=["embedding"],
     )
     return (embedding_shift_df,)
 
 
 @app.cell
 def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_shift_intervention(embedding_shift_df, "downsample", _space)
     plt.gcf()
     return
@@ -659,7 +523,7 @@ def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
 
 @app.cell
 def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_shift_intervention(embedding_shift_df, "gene_dropout", _space)
     plt.gcf()
     return
@@ -667,7 +531,7 @@ def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
 
 @app.cell
 def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_shift_intervention(embedding_shift_df, "gene_shuffle", _space)
     plt.gcf()
     return
@@ -675,7 +539,7 @@ def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
 
 @app.cell
 def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_shift_intervention(embedding_shift_df, "local_smoothing", _space)
     plt.gcf()
     return
@@ -683,223 +547,10 @@ def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
 
 @app.cell
 def _(embedding_shift_df, plot_embedding_shift_intervention, plt):
-    for _space in ["raw", "embedding"]:
+    for _space in ["embedding"]:
         plot_embedding_shift_intervention(
             embedding_shift_df, "poisson_resampling", _space
         )
-    plt.gcf()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### Embedding shift gain
-
-    **One figure per intervention** (`embedding_minus_raw`). Same 2×2 shift metrics as above; positive values mean the embedding amplifies the intervention vs raw.
-    """)
-    return
-
-
-@app.cell
-def _(filter_metrics, metrics_df):
-    _gain_names = [
-        "paired_cell_l2_norm",
-        "shift_pairwise_cosine",
-        "within_ref_pairwise_l2",
-        "within_man_pairwise_l2",
-    ]
-    embedding_shift_gain_df = filter_metrics(
-        metrics_df,
-        metric_category="embedding_shift_gain",
-        metric_names=_gain_names,
-        spaces=["embedding_minus_raw"],
-    )
-    return (embedding_shift_gain_df,)
-
-
-@app.cell
-def _(embedding_shift_gain_df, plot_embedding_shift_gain_intervention, plt):
-    plot_embedding_shift_gain_intervention(embedding_shift_gain_df, "downsample")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(embedding_shift_gain_df, plot_embedding_shift_gain_intervention, plt):
-    plot_embedding_shift_gain_intervention(embedding_shift_gain_df, "gene_dropout")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(embedding_shift_gain_df, plot_embedding_shift_gain_intervention, plt):
-    plot_embedding_shift_gain_intervention(embedding_shift_gain_df, "gene_shuffle")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(embedding_shift_gain_df, plot_embedding_shift_gain_intervention, plt):
-    plot_embedding_shift_gain_intervention(embedding_shift_gain_df, "local_smoothing")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(embedding_shift_gain_df, plot_embedding_shift_gain_intervention, plt):
-    plot_embedding_shift_gain_intervention(
-        embedding_shift_gain_df, "poisson_resampling"
-    )
-    plt.gcf()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### KNN metrics
-
-    **One figure per intervention** per metric family:
-    - **knn recall:** 1×3 panels (`k` = 5, 15, 50) for `raw` and `embedding`
-    - **diffusion:** 2×N panels (JS / KL rows, sweep param columns, x = `diffusion_t`)
-    """)
-    return
-
-
-@app.cell
-def _(filter_metrics, metrics_df):
-    knn_metrics_df = filter_metrics(
-        metrics_df,
-        metric_category="knn_metrics",
-        metric_names=["knn_recall", "diffusion_js", "diffusion_sym_kl"],
-        spaces=["raw", "embedding"],
-    )
-    return (knn_metrics_df,)
-
-
-@app.cell
-def _(
-    knn_metrics_df,
-    plot_knn_diffusion_intervention,
-    plot_knn_recall_intervention,
-    plt,
-):
-    for _space in ["raw", "embedding"]:
-        plot_knn_recall_intervention(knn_metrics_df, "downsample", _space)
-        plot_knn_diffusion_intervention(knn_metrics_df, "downsample", _space)
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(
-    knn_metrics_df,
-    plot_knn_diffusion_intervention,
-    plot_knn_recall_intervention,
-    plt,
-):
-    for _space in ["raw", "embedding"]:
-        plot_knn_recall_intervention(knn_metrics_df, "gene_dropout", _space)
-        plot_knn_diffusion_intervention(knn_metrics_df, "gene_dropout", _space)
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(
-    knn_metrics_df,
-    plot_knn_diffusion_intervention,
-    plot_knn_recall_intervention,
-    plt,
-):
-    for _space in ["raw", "embedding"]:
-        plot_knn_recall_intervention(knn_metrics_df, "gene_shuffle", _space)
-        plot_knn_diffusion_intervention(knn_metrics_df, "gene_shuffle", _space)
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(
-    knn_metrics_df,
-    plot_knn_diffusion_intervention,
-    plot_knn_recall_intervention,
-    plt,
-):
-    for _space in ["raw", "embedding"]:
-        plot_knn_recall_intervention(knn_metrics_df, "local_smoothing", _space)
-        plot_knn_diffusion_intervention(knn_metrics_df, "local_smoothing", _space)
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(
-    knn_metrics_df,
-    plot_knn_diffusion_intervention,
-    plot_knn_recall_intervention,
-    plt,
-):
-    for _space in ["raw", "embedding"]:
-        plot_knn_recall_intervention(knn_metrics_df, "poisson_resampling", _space)
-        plot_knn_diffusion_intervention(knn_metrics_df, "poisson_resampling", _space)
-    plt.gcf()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### KNN metrics gain
-
-    **One figure per intervention:** `knn_recall` gain (`embedding_minus_raw`), 1×3 panels for each `k`.
-    """)
-    return
-
-
-@app.cell
-def _(filter_metrics, metrics_df):
-    knn_gain_df = filter_metrics(
-        metrics_df,
-        metric_category="knn_metrics_gain",
-        metric_names=["knn_recall"],
-        spaces=["embedding_minus_raw"],
-    )
-    return (knn_gain_df,)
-
-
-@app.cell
-def _(knn_gain_df, plot_knn_gain_intervention, plt):
-    plot_knn_gain_intervention(knn_gain_df, "downsample")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(knn_gain_df, plot_knn_gain_intervention, plt):
-    plot_knn_gain_intervention(knn_gain_df, "gene_dropout")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(knn_gain_df, plot_knn_gain_intervention, plt):
-    plot_knn_gain_intervention(knn_gain_df, "gene_shuffle")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(knn_gain_df, plot_knn_gain_intervention, plt):
-    plot_knn_gain_intervention(knn_gain_df, "local_smoothing")
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(knn_gain_df, plot_knn_gain_intervention, plt):
-    plot_knn_gain_intervention(knn_gain_df, "poisson_resampling")
     plt.gcf()
     return
 
@@ -965,14 +616,14 @@ def _(mo):
     mo.md(r"""
     ### Cell type and batch metrics
 
-    `cell_type_asw`, `graph_connectivity`, and `batch_ilisi` via [scib-metrics](https://scib-metrics.readthedocs.io/). NaN rows usually mean missing `obs` columns or a failed metric (see eval logs).
+    `silhouette_label`, `graph_connectivity`, and `ilisi_knn` via [scib-metrics](https://scib-metrics.readthedocs.io/). NaN rows usually mean missing `obs` columns or a failed metric (see eval logs).
     """)
     return
 
 
 @app.cell
 def _(metrics_df, mo):
-    _batch = metrics_df[metrics_df["metric_category"] == "cell_type_and_batch_metrics"]
+    _batch = metrics_df[metrics_df["metric_category"] == "bio_conservation_metrics"]
     _n_null = _batch["value_mean"].isna().sum()
     mo.vstack(
         [

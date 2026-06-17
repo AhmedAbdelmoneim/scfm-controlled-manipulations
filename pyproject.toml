@@ -35,8 +35,10 @@ dependencies = [
     "ruff",
     "scanpy",
     "scib-metrics",
+    "scikit-dimension>=0.3.4",
     "scikit-learn",
     "scikit-misc>=0.5.2",
+    "viscore @ git+https://github.com/saeyslab/ViScore.git",
 ]
 requires-python = "~=3.11.0"
 
@@ -57,4 +59,5 @@ force-sort-within-sections = true
 # BLAS thread env must be set before numpy/scipy import (anndata/scanpy).
 "scfm_controlled_manipulations/pipeline.py" = ["E402"]
 "scfm_controlled_manipulations/evaluation/run.py" = ["E402"]
+"scfm_controlled_manipulations/evaluation/run_scib.py" = ["E402"]
 

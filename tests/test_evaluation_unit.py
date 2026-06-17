@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 from typing import Any
 import unittest
 
+import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from scfm_controlled_manipulations.evaluation.metrics_knn import (
-    knn_neighbors,
-    knn_overlap_per_cell,
-)
 from scfm_controlled_manipulations.io import embedding_path, manipulation_path
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
@@ -45,17 +43,6 @@ class SweepTest(unittest.TestCase):
         out = expand_intervention_specs(specs)
         self.assertEqual(len(out), 2)
         self.assertEqual({o["kwargs"]["fraction"] for o in out}, {0.5, 0.9})
-
-
-class KnnMaxSliceTest(unittest.TestCase):
-    def test_slice_matches_direct_knn(self) -> None:
-
-        rng = np.random.default_rng(2)
-        mat = rng.standard_normal((40, 6))
-        k = 5
-        _, idx_direct = knn_neighbors(mat, k, "euclidean")
-        _, idx_max = knn_neighbors(mat, 10, "euclidean")
-        self.assertTrue(np.array_equal(idx_direct, idx_max[:, :k]))
 
 
 class LeidenMpSafetyTest(unittest.TestCase):
@@ -104,245 +91,242 @@ class CellBatchMetricsTest(unittest.TestCase):
                 "batch": rng.choice(["b1", "b2"], size=n),
             }
         )
-        raw = sp.csr_matrix(rng.standard_normal((n, 5)).astype(np.float32))
         return SimpleNamespace(
-            raw_ref=raw,
-            raw_man=raw.copy(),
             emb_ref=emb,
             emb_man=emb + 0.01,
             obs=obs,
         )
 
-    def test_asw_and_ilisi_when_columns_present(self) -> None:
-        from unittest import mock
+    @staticmethod
+    def _write_counts_fixture(tmp: Path, *, n: int, intervention_id: str) -> None:
+        manip_dir = tmp / "manipulations"
+        manip_dir.mkdir(parents=True)
+        rng = np.random.default_rng(11)
+        counts = sp.csr_matrix(rng.poisson(1, (n, 20)).astype(np.float32))
+        ad.AnnData(X=counts).write_h5ad(manip_dir / f"{intervention_id}.h5ad")
 
-        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
+    def test_benchmarker_to_rows_flattens_categories(self) -> None:
+        from scib_metrics.benchmark._core import _METRIC_TYPE
+
         from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-            compute_cell_type_and_batch_metrics,
+            BATCH_CATEGORY,
+            BIO_CATEGORY,
+            _benchmarker_to_rows,
         )
 
-        with (
-            mock.patch.object(mcb.scib_metrics, "silhouette_label", return_value=0.4),
-            mock.patch.object(mcb.scib_metrics, "graph_connectivity", return_value=0.5),
-            mock.patch.object(mcb.scib_metrics, "ilisi_knn", return_value=0.6),
-        ):
-            bundle = self._toy_bundle()
-            df = compute_cell_type_and_batch_metrics(
-                bundle=bundle,
-                dataset_id="toy",
-                model="m",
-                intervention_id="i1",
-                intervention_name="n",
-                seed=0,
-                cell_type_col="cell_type",
-                batch_col="batch",
-                k_values=[15],
-                distance_metrics=["euclidean"],
-            )
-            manip = df[df["space"] == "embedding_manipulated"]
-            names = set(manip["metric_name"])
-            self.assertEqual(names, {"cell_type_asw", "graph_connectivity", "batch_ilisi"})
-            for _, row in manip.iterrows():
-                self.assertFalse(np.isnan(row["value_mean"]))
-
-    def test_skips_batch_metrics_without_batch_col(self) -> None:
-        from unittest import mock
-
-        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
-        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-            compute_cell_type_and_batch_metrics,
+        results = pd.DataFrame(
+            {
+                "embedding": [0.4, 0.5, 0.6],
+                _METRIC_TYPE: [
+                    "Bio conservation",
+                    "Batch correction",
+                    "Bio conservation",
+                ],
+            },
+            index=["silhouette_label", "ilisi_knn", "graph_connectivity"],
         )
-
-        with mock.patch.object(mcb.scib_metrics, "silhouette_label", return_value=0.4):
-            bundle = self._toy_bundle()
-            df = compute_cell_type_and_batch_metrics(
-                bundle=bundle,
-                dataset_id="toy",
-                model="m",
-                intervention_id="i1",
-                intervention_name="n",
-                seed=0,
-                cell_type_col="cell_type",
-                batch_col=None,
-                k_values=[15],
-                distance_metrics=["euclidean"],
-            )
-            manip = df[df["space"] == "embedding_manipulated"]
-            self.assertEqual(set(manip["metric_name"]), {"cell_type_asw", "graph_connectivity"})
-
-    def test_skips_cell_type_metrics_without_cell_type_col(self) -> None:
-        from unittest import mock
-
-        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
-        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-            compute_cell_type_and_batch_metrics,
+        rows = _benchmarker_to_rows(
+            results,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            space_label="embedding_manipulated",
+            seed=0,
+            n_cells=80,
         )
+        categories = {row["metric_category"] for row in rows}
+        self.assertEqual(categories, {BIO_CATEGORY, BATCH_CATEGORY})
 
-        with mock.patch.object(mcb.scib_metrics, "ilisi_knn", return_value=0.6):
-            bundle = self._toy_bundle()
-            df = compute_cell_type_and_batch_metrics(
-                bundle=bundle,
-                dataset_id="toy",
-                model="m",
-                intervention_id="i1",
-                intervention_name="n",
-                seed=0,
-                cell_type_col=None,
-                batch_col="batch",
-                k_values=[15],
-                distance_metrics=["euclidean"],
-            )
-            manip = df[df["space"] == "embedding_manipulated"]
-            self.assertEqual(set(manip["metric_name"]), {"batch_ilisi"})
-
-    def test_reference_rows_stamped_from_template(self) -> None:
-        from unittest import mock
-
-        from scfm_controlled_manipulations.evaluation import metrics_cell_batch as mcb
+    def test_skips_when_columns_missing(self) -> None:
+        from scfm_controlled_manipulations.evaluation.data import load_manipulation_counts
         from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
             compute_cell_batch_reference_rows,
-            compute_cell_type_and_batch_metrics,
         )
 
-        with (
-            mock.patch.object(mcb.scib_metrics, "silhouette_label", return_value=0.4),
-            mock.patch.object(mcb.scib_metrics, "graph_connectivity", return_value=0.5),
-            mock.patch.object(mcb.scib_metrics, "ilisi_knn", return_value=0.6),
-        ):
-            bundle = self._toy_bundle(n=60)
-            template = compute_cell_batch_reference_rows(
+        bundle = self._toy_bundle()
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp)
+            self._write_counts_fixture(results_dir, n=80, intervention_id="reference")
+            rows = compute_cell_batch_reference_rows(
+                counts=load_manipulation_counts(results_dir, "reference"),
                 mat=bundle.emb_ref,
                 obs_df=bundle.obs,
                 space_label="embedding_reference",
                 dataset_id="toy",
                 model="m",
+                intervention_id="reference",
+                intervention_name="reference",
                 seed=0,
-                cell_type_col="cell_type",
+                cell_type_col=None,
                 batch_col="batch",
-                k_values=[15],
-                distance_metrics=["euclidean"],
-                n_cells=60,
+                n_cells=80,
             )
-            df = compute_cell_type_and_batch_metrics(
-                bundle=bundle,
+            self.assertEqual(rows, [])
+
+    def test_reference_rows_use_reference_intervention_id(self) -> None:
+        from unittest import mock
+
+        from scfm_controlled_manipulations.evaluation.data import load_manipulation_counts
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_batch_reference_rows,
+        )
+
+        bundle = self._toy_bundle(n=60)
+        fake_rows = [
+            {
+                "dataset_id": "toy",
+                "model": "m",
+                "intervention_id": "reference",
+                "intervention_name": "reference",
+                "metric_category": "bio_conservation_metrics",
+                "metric_name": "silhouette_label",
+                "space": "embedding_reference",
+                "value_mean": 0.4,
+                "n_cells": 60,
+                "seed": 0,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            "scfm_controlled_manipulations.evaluation.metrics_cell_batch._run_benchmarker_rows",
+            return_value=fake_rows,
+        ):
+            results_dir = Path(tmp)
+            self._write_counts_fixture(results_dir, n=60, intervention_id="reference")
+            rows = compute_cell_batch_reference_rows(
+                counts=load_manipulation_counts(results_dir, "reference"),
+                mat=bundle.emb_ref,
+                obs_df=bundle.obs,
+                space_label="embedding_reference",
                 dataset_id="toy",
                 model="m",
-                intervention_id="i1",
-                intervention_name="n",
+                intervention_id="reference",
+                intervention_name="reference",
                 seed=0,
                 cell_type_col="cell_type",
                 batch_col="batch",
-                k_values=[15],
-                distance_metrics=["euclidean"],
-                static_row_templates=[template],
+                n_cells=60,
             )
-            ref = df[df["space"] == "embedding_reference"]
-            self.assertTrue((ref["intervention_id"] == "i1").all())
-            self.assertGreaterEqual(len(ref), 3)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["intervention_id"], "reference")
+        self.assertEqual(rows[0]["space"], "embedding_reference")
 
-    def test_scib_metrics_returns_finite_values(self) -> None:
+    def test_scib_benchmark_returns_finite_values(self) -> None:
+        from scfm_controlled_manipulations.evaluation.data import load_manipulation_counts
         from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
-            compute_cell_type_and_batch_metrics,
+            compute_cell_batch_reference_rows,
         )
 
-        bundle = self._toy_bundle(n=120)
-        df = compute_cell_type_and_batch_metrics(
+        bundle = self._toy_bundle(n=200)
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp)
+            self._write_counts_fixture(results_dir, n=200, intervention_id="reference")
+            rows = compute_cell_batch_reference_rows(
+                counts=load_manipulation_counts(results_dir, "reference"),
+                mat=bundle.emb_ref,
+                obs_df=bundle.obs,
+                space_label="embedding_reference",
+                dataset_id="toy",
+                model="m",
+                intervention_id="reference",
+                intervention_name="reference",
+                seed=0,
+                cell_type_col="cell_type",
+                batch_col="batch",
+                n_cells=200,
+            )
+            metric_names = {row["metric_name"] for row in rows}
+            self.assertIn("silhouette_label", metric_names)
+            self.assertIn("ilisi_knn", metric_names)
+            values = [row["value_mean"] for row in rows]
+            finite = sum(1 for v in values if np.isfinite(v))
+            self.assertGreater(finite, 0)
+
+
+class FilterZeroCountCellsTest(unittest.TestCase):
+    def test_removes_zero_count_cells_and_logs_count(self) -> None:
+        from scfm_controlled_manipulations.qc import filter_zero_count_cells
+
+        X = sp.csr_matrix(
+            [
+                [1.0, 0.0],
+                [0.0, 0.0],
+                [2.0, 3.0],
+            ]
+        )
+        adata = ad.AnnData(X=X, obs={"cell_id": ["a", "b", "c"]})
+        kept = filter_zero_count_cells(adata)
+        self.assertEqual(kept, 2)
+        self.assertEqual(list(adata.obs["cell_id"]), ["a", "c"])
+
+    def test_noop_when_all_nonzero(self) -> None:
+        from scfm_controlled_manipulations.qc import filter_zero_count_cells
+
+        adata = ad.AnnData(X=sp.csr_matrix([[1.0, 2.0], [3.0, 0.0]]))
+        kept = filter_zero_count_cells(adata)
+        self.assertEqual(kept, 2)
+        self.assertEqual(adata.n_obs, 2)
+
+    def test_uses_raw_counts_when_present(self) -> None:
+        from scfm_controlled_manipulations.qc import filter_zero_count_cells
+
+        X = np.array([[-1.0, 0.0], [2.0, 3.0]], dtype=np.float32)
+        raw = ad.AnnData(sp.csr_matrix([[5.0, 0.0], [1.0, 2.0]]))
+        adata = ad.AnnData(X=X)
+        adata.raw = raw
+        kept = filter_zero_count_cells(adata)
+        self.assertEqual(kept, 2)
+        self.assertEqual(adata.n_obs, 2)
+
+
+class StructureMetricsTest(unittest.TestCase):
+    def test_identity_pair_scores_perfect(self) -> None:
+        import json
+
+        from scfm_controlled_manipulations.evaluation.metrics_structure import (
+            compute_structure_metrics,
+        )
+
+        rng = np.random.default_rng(0)
+        ref = rng.standard_normal((80, 12))
+        bundle = type(
+            "Bundle",
+            (),
+            {
+                "emb_ref": ref.copy(),
+                "emb_man": ref.copy(),
+            },
+        )()
+        df = compute_structure_metrics(
             bundle=bundle,
-            dataset_id="toy",
-            model="m",
-            intervention_id="i1",
-            intervention_name="n",
+            dataset_id="test",
+            model="pca",
+            intervention_id="iid",
+            intervention_name="reference",
             seed=0,
-            cell_type_col="cell_type",
-            batch_col="batch",
-            k_values=[15],
-            distance_metrics=["euclidean"],
         )
-        manip = df[df["space"] == "embedding_manipulated"]
-        self.assertEqual(
-            set(manip["metric_name"]),
-            {"cell_type_asw", "graph_connectivity", "batch_ilisi"},
-        )
-        for _, row in manip.iterrows():
-            self.assertTrue(np.isfinite(row["value_mean"]))
+        emb_sl = df[
+            (df["space"] == "embedding")
+            & (df["metric_name"] == "viscore_local_sp")
+        ]
+        self.assertEqual(len(emb_sl), 1)
+        self.assertAlmostEqual(float(emb_sl.iloc[0]["value_mean"]), 1.0, places=5)
 
+        emb_dc = df[(df["space"] == "embedding") & (df["metric_name"] == "distcorr")]
+        self.assertAlmostEqual(float(emb_dc.iloc[0]["value_mean"]), 1.0, places=5)
 
-class KnnOverlapTest(unittest.TestCase):
-    def test_perfect_overlap(self) -> None:
-        n = 10
-        k = 3
-        idx = np.array([np.roll(np.arange(n), -i)[:k] for i in range(n)])
-        recall = knn_overlap_per_cell(idx, idx, k)
-        self.assertTrue(np.allclose(recall, 1.0))
+        curve = df[(df["space"] == "embedding") & (df["metric_name"] == "rnx_curve")]
+        self.assertEqual(len(curve), 1)
+        payload = json.loads(str(curve.iloc[0]["rnx_curve_json"]))
+        self.assertIn("rnx", payload)
+        self.assertGreater(len(payload["rnx"]), 0)
 
-
-class KnnPermutationNullTest(unittest.TestCase):
-    def _mean_null_recall(
-        self, ref: np.ndarray, man: np.ndarray, *, k: int, metric: str, seed: int
-    ) -> float:
-        from scfm_controlled_manipulations.evaluation.metrics_knn import (
-            _knn_null_seed,
-            knn_overlap_per_cell,
-        )
-
-        _, ref_idx = knn_neighbors(ref, k, metric)
-        _, man_idx = knn_neighbors(man, k, metric)
-        null_rng = np.random.default_rng(_knn_null_seed(seed, "embedding", metric, k))
-        perm = null_rng.permutation(ref.shape[0])
-        null_recall = knn_overlap_per_cell(ref_idx, man_idx[perm], k)
-        return float(np.mean(null_recall))
-
-    def test_empirical_null_breaks_pairing(self) -> None:
-        from scfm_controlled_manipulations.evaluation.metrics_knn import (
-            knn_overlap_per_cell,
-        )
-
-        rng = np.random.default_rng(0)
-        n, d, k = 80, 8, 5
-        ref = rng.standard_normal((n, d))
-        man = ref.copy()
-        _, ref_idx = knn_neighbors(ref, k, "euclidean")
-        _, man_idx = knn_neighbors(man, k, "euclidean")
-        recall = knn_overlap_per_cell(ref_idx, man_idx, k)
-        self.assertGreater(float(np.mean(recall)), 0.95)
-
-        null = self._mean_null_recall(ref, man, k=k, metric="euclidean", seed=42)
-        self.assertLess(null, float(np.mean(recall)))
-        self.assertEqual(
-            null,
-            self._mean_null_recall(ref, man, k=k, metric="euclidean", seed=42),
-        )
-
-    def test_empirical_null_above_analytical_with_structure(self) -> None:
-        from sklearn.datasets import make_blobs
-
-        ref, _ = make_blobs(
-            n_samples=5000, centers=20, n_features=32, cluster_std=1.5, random_state=0
-        )
-        null = self._mean_null_recall(ref, ref.copy(), k=15, metric="euclidean", seed=0)
-        analytical = 15 / (len(ref) - 1)
-        self.assertGreater(null, analytical)
-
-class DiffusionPermutationNullTest(unittest.TestCase):
-    def test_permutation_null_exceeds_aligned_identity(self) -> None:
-        from scfm_controlled_manipulations.evaluation.metrics_knn import (
-            _diffusion_sym_kl_js_means,
-            build_weighted_knn_adjacency,
-            transition_powers,
-        )
-
-        rng = np.random.default_rng(0)
-        ref = rng.standard_normal((120, 8))
-        adj = build_weighted_knn_adjacency(ref, k=5, metric="euclidean")
-        p_t = transition_powers(adj, [2])[2]
-        q_t = p_t.copy()
-        aligned_sym, aligned_js = _diffusion_sym_kl_js_means(p_t, q_t, row_chunk=64)
-        perm = rng.permutation(ref.shape[0])
-        null_sym, null_js = _diffusion_sym_kl_js_means(p_t, q_t[perm], row_chunk=64)
-        self.assertAlmostEqual(aligned_sym, 0.0, places=5)
-        self.assertAlmostEqual(aligned_js, 0.0, places=5)
-        self.assertGreater(null_sym, aligned_sym)
-        self.assertGreater(null_js, aligned_js)
+        twonn = df[
+            (df["space"] == "embedding")
+            & (df["metric_name"] == "intrinsic_dim_twonn")
+            & (df["side"] == "ref")
+        ]
+        self.assertTrue(np.isfinite(float(twonn.iloc[0]["value_mean"])))
 
 
 class EmbeddingAlignmentTest(unittest.TestCase):
@@ -408,8 +392,6 @@ class StatsShiftMetricsTest(unittest.TestCase):
         ref = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
         man = ref + np.array([1.0, 0.0], dtype=np.float32)
         return AlignedBundle(
-            raw_ref=sp.csr_matrix(ref),
-            raw_man=sp.csr_matrix(man),
             emb_ref=ref.copy(),
             emb_man=man.copy(),
             obs=pd.DataFrame(index=["a", "b", "c"]),
@@ -488,6 +470,7 @@ class StatsShiftMetricsTest(unittest.TestCase):
         self.assertFalse(np.isnan(col_ref["value_mean"]))
 
     def test_reference_cache_idempotent(self) -> None:
+        from scfm_controlled_manipulations.evaluation.data import AlignedBundle
         from scfm_controlled_manipulations.evaluation.context import (
             DatasetEvaluateContext,
             ModelEvaluateContext,
@@ -502,7 +485,6 @@ class StatsShiftMetricsTest(unittest.TestCase):
 
         bundle = self._toy_bundle()
         dataset_ctx = DatasetEvaluateContext(
-            raw_ref=bundle.raw_ref,
             obs=bundle.obs,
             n_cells=3,
         )
@@ -516,9 +498,7 @@ class StatsShiftMetricsTest(unittest.TestCase):
         )
 
         man2 = bundle.emb_man + np.array([0.0, 1.0], dtype=np.float32)
-        bundle2 = type(bundle)(
-            raw_ref=bundle.raw_ref,
-            raw_man=sp.csr_matrix(bundle.raw_man.toarray() + np.array([0.0, 1.0])),
+        bundle2 = AlignedBundle(
             emb_ref=bundle.emb_ref,
             emb_man=man2,
             obs=bundle.obs,
@@ -570,6 +550,75 @@ class StatsShiftMetricsTest(unittest.TestCase):
         w1 = sh1[sh1["metric_name"] == "within_ref_pairwise_l2"]["value_mean"].values
         w2 = sh2[sh2["metric_name"] == "within_ref_pairwise_l2"]["value_mean"].values
         np.testing.assert_allclose(w1, w2)
+
+    def test_global_distance_correlation(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
+            compute_embedding_shift,
+            global_distance_correlation,
+        )
+
+        ref = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64)
+        man = ref.copy()
+        self.assertAlmostEqual(
+            global_distance_correlation(ref, man, metric="euclidean"), 1.0, places=5
+        )
+        warped = man.copy()
+        warped[0] += np.array([2.0, 0.0], dtype=np.float64)
+        self.assertLess(global_distance_correlation(ref, warped, metric="euclidean"), 1.0)
+
+        bundle = self._toy_bundle()
+        df = compute_embedding_shift(
+            bundle=bundle,
+            dataset_id="toy",
+            model="m",
+            intervention_id="i1",
+            intervention_name="n",
+            seed=0,
+            distance_correlation_subsample_n=3,
+            distance_metrics=["euclidean"],
+        )
+        dist_rows = df[df["metric_name"] == "global_distance_correlation"]
+        self.assertEqual(len(dist_rows), 1)
+        self.assertEqual(dist_rows.iloc[0]["space"], "embedding")
+        self.assertTrue(np.isfinite(dist_rows.iloc[0]["value_mean"]))
+
+
+class RunEvaluateScibTest(unittest.TestCase):
+    def test_run_evaluate_scib_writes_separate_csv(self) -> None:
+        import sys
+
+        root = Path(__file__).resolve().parents[1]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+        from scripts.benchmark_eval import setup_fixture
+        from scfm_controlled_manipulations.evaluation.run_scib import run_evaluate_scib
+        from scfm_controlled_manipulations.io import evaluation_scib_metrics_csv_path
+
+        config_path = root / "configs" / "experiments" / "atlases.yaml"
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture_root = Path(tmp)
+            run_cfg = setup_fixture(
+                fixture_root,
+                n_cells=200,
+                n_genes=400,
+                emb_dim=32,
+                n_cell_types=3,
+                n_batches=2,
+                config_path=config_path,
+                models=["pca"],
+                max_interventions=1,
+            )
+            run_evaluate_scib(run_cfg)
+            out_path = evaluation_scib_metrics_csv_path(run_cfg["results_dir"], "pca")
+            self.assertTrue(out_path.is_file())
+            df = pd.read_csv(out_path)
+            self.assertFalse(df.empty)
+            self.assertTrue((df["intervention_id"] == "reference").all())
+            self.assertTrue((df["space"] == "embedding_reference").all())
+            categories = set(df["metric_category"].unique())
+            self.assertIn("bio_conservation_metrics", categories)
+            self.assertIn("batch_correction_metrics", categories)
 
 
 if __name__ == "__main__":

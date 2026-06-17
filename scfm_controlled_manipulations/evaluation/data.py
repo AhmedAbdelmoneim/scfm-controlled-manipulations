@@ -1,4 +1,4 @@
-"""Load paired reference/manipulation matrices for structure evaluation."""
+"""Load paired reference/manipulation embeddings for structure evaluation."""
 
 from __future__ import annotations
 
@@ -14,10 +14,8 @@ import scipy.sparse as sp
 
 @dataclass(frozen=True)
 class AlignedBundle:
-    """Paired matrices with identical ``obs`` ordering (see ``assert_obs_aligned``)."""
+    """Paired embedding matrices with identical ``obs`` ordering (see ``assert_obs_aligned``)."""
 
-    raw_ref: Any
-    raw_man: Any
     emb_ref: np.ndarray
     emb_man: np.ndarray
     obs: pd.DataFrame
@@ -91,3 +89,10 @@ def _as_float_csr(x: Any) -> sp.csr_matrix:
     if sp.issparse(x):
         return x.tocsr().astype(np.float64)
     return sp.csr_matrix(np.asarray(x, dtype=np.float64))
+
+
+def load_manipulation_counts(results_dir: Path, intervention_id: str) -> sp.csr_matrix:
+    """Load count matrix from a manipulation h5ad (used by scib-metrics only)."""
+    path = results_dir / "manipulations" / f"{intervention_id}.h5ad"
+    adata = read_h5ad_for_eval(path)
+    return _as_float_csr(adata.X)
