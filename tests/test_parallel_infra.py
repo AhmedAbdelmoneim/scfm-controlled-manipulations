@@ -9,7 +9,6 @@ import unittest
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
 
 from scfm_controlled_manipulations.compute_env import (
     apply_thread_limits,
@@ -17,9 +16,10 @@ from scfm_controlled_manipulations.compute_env import (
     thread_limit_environ,
 )
 from scfm_controlled_manipulations.evaluation.context import DatasetEvaluateContext, ModelEvaluateContext
-from scfm_controlled_manipulations.evaluation.disk_cache import load_or_build_pickle
-from scfm_controlled_manipulations.evaluation.knn_cache import KnnIndexCache
-from scfm_controlled_manipulations.evaluation.metrics_knn import knn_neighbors
+from scfm_controlled_manipulations.evaluation.disk_cache import (
+    load_or_build_pickle,
+    write_pickle_cache,
+)
 from scfm_controlled_manipulations.evaluation.run import merge_evaluation_config
 from scfm_controlled_manipulations.evaluation.worker import (
     SharedEvalContext,
@@ -35,15 +35,6 @@ class BlasThreadLimitTest(unittest.TestCase):
             self.assertEqual(os.environ.get("OMP_NUM_THREADS"), "8")
             self.assertEqual(os.environ.get("NUMBA_NUM_THREADS"), "1")
         self.assertEqual(os.environ.get("OMP_NUM_THREADS"), "1")
-
-    def test_knn_neighbors_with_n_jobs_does_not_touch_scanpy_n_jobs(self) -> None:
-        import scanpy as sc
-
-        sc.settings.n_jobs = 1
-        rng = np.random.default_rng(3)
-        mat = rng.standard_normal((24, 5))
-        knn_neighbors(mat, 3, "euclidean", n_jobs=4)
-        self.assertEqual(sc.settings.n_jobs, 1)
 
 
 class ThreadLimitTest(unittest.TestCase):
@@ -72,81 +63,21 @@ class DiskCacheTest(unittest.TestCase):
             self.assertEqual(load_or_build_pickle(path, builder, label="test"), 42)
             self.assertEqual(calls["n"], 1)
 
-
-class TransitionBundleCacheTest(unittest.TestCase):
-    def test_transition_bundle_builder_runs_once(self) -> None:
-        import numpy as np
-        import scipy.sparse as sp
-
-        from scfm_controlled_manipulations.evaluation.metrics_knn import (
-            _load_or_compute_transition_powers,
-        )
-
-        rng = np.random.default_rng(0)
-        mat = rng.standard_normal((64, 8))
-        calls = {"n": 0}
-
-        def adj_builder() -> sp.csr_matrix:
-            from scfm_controlled_manipulations.evaluation.metrics_knn import (
-                build_weighted_knn_adjacency,
-            )
-
-            calls["n"] += 1
-            return build_weighted_knn_adjacency(mat, k=5, metric="euclidean")
-
+    def test_write_pickle_cache_creates_parent_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            cache_dir = Path(tmp)
-            kwargs = dict(
-                cache_dir=cache_dir,
-                dataset_id="ds",
-                model="pca",
-                space="embedding",
-                metric="euclidean",
-                k=5,
-                n_cells=64,
-                side="ref",
-                adj_builder=adj_builder,
-                t_values=[1, 2, 4],
-            )
-            first = _load_or_compute_transition_powers(**kwargs)
-            second = _load_or_compute_transition_powers(**kwargs)
-            self.assertEqual(set(first.keys()), {1, 2, 4})
-            self.assertEqual(set(second.keys()), {1, 2, 4})
-            self.assertEqual(calls["n"], 1)
-
-
-class KnnDiskWarmTest(unittest.TestCase):
-    def test_warm_reference_from_disk_matches_direct_knn(self) -> None:
-        rng = np.random.default_rng(0)
-        mat = rng.standard_normal((48, 6))
-        k = 5
-        with tempfile.TemporaryDirectory() as tmp:
-            cache_dir = Path(tmp)
-            cache = KnnIndexCache()
-            direct = knn_neighbors(mat, k, "euclidean", n_jobs=1)
-            loaded = cache.warm_reference_from_disk(
-                mat,
-                space="embedding",
-                k_max=k,
-                metric="euclidean",
-                cache_dir=cache_dir,
-                dataset_id="ds",
-                model="pca",
-                n_cells=48,
-            )
-            self.assertTrue(np.allclose(direct[0], loaded[0]))
-            self.assertTrue(np.array_equal(direct[1], loaded[1]))
-            cached = cache.neighbors(mat, k, "euclidean")
-            self.assertTrue(np.array_equal(cached[1], direct[1]))
+            results = Path(tmp) / "results"
+            (results / "evaluation").mkdir(parents=True)
+            cache_path = results / "evaluation_cache" / "snapshot.pkl"
+            self.assertFalse(cache_path.parent.exists())
+            write_pickle_cache(cache_path, {"ok": True})
+            self.assertTrue(cache_path.is_file())
 
 
 class BootstrapSnapshotTest(unittest.TestCase):
     def test_bootstrap_roundtrip_rebinds_caches(self) -> None:
         rng = np.random.default_rng(1)
-        raw = sp.csr_matrix(rng.standard_normal((32, 4)))
         emb = rng.standard_normal((32, 8)).astype(np.float32)
         dataset_ctx = DatasetEvaluateContext(
-            raw_ref=raw,
             obs=pd.DataFrame(index=range(32)),
             n_cells=32,
         )
@@ -166,18 +97,11 @@ class BootstrapSnapshotTest(unittest.TestCase):
                 dataset_id="ds",
                 seed=7,
                 k_values=[5],
-                trustworthiness_k_values=[5],
                 distance_metrics=["euclidean"],
-                diffusion_t_values=[1],
                 leiden_resolutions=[1.0],
                 cache_path=tmp_path,
-                cell_type_col=None,
-                batch_col=None,
                 stats_shift_pairwise_max_pairs=None,
-                knn_alpha=10.0,
-                knn_bandwidth_k=None,
-                knn_n_null_permutations=1,
-                static_row_templates=[],
+                distance_correlation_subsample_n=500,
             )
             path = tmp_path / "bootstrap.pkl"
             write_worker_bootstrap(path, shared)

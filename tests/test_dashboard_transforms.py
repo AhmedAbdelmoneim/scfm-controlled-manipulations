@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from metrics_dashboard.config import DASHBOARD_METRICS, MODEL_COLORS, MODEL_ORDER
+from metrics_dashboard.config import DASHBOARD_METRICS, MODEL_COLORS, MODEL_ORDER, DashboardMetric
 from metrics_dashboard.transforms import (
     average_metrics_across_datasets,
     prepare_set1_grid,
@@ -41,13 +41,12 @@ class MetricRowSchemaTest(unittest.TestCase):
             model="pca",
             intervention_id="i1",
             intervention_name="downsample",
-            metric_category="knn_metrics",
-            metric_name="knn_recall",
+            metric_category="structure_metrics",
+            metric_name="viscore_local_sp",
             space="embedding",
             summary=distribution_summary(np.array([0.5, 0.6, 0.7])),
             n_cells=3,
             seed=0,
-            null_value=0.4,
         )
         self.assertIn("value_std", row)
         self.assertNotIn("value_ci_lower", row)
@@ -64,32 +63,32 @@ class TransformTest(unittest.TestCase):
                         "model": model,
                         "intervention_id": f"down_{frac}",
                         "intervention_name": "downsample",
-                        "metric_category": "knn_metrics",
-                        "metric_name": "knn_recall",
+                        "metric_category": "structure_metrics",
+                        "metric_name": "viscore_local_sp",
                         "space": "embedding",
                         "value_mean": frac,
                         "value_std": 0.05,
-                        "null_value": 0.1,
-                        "k": 15,
-                        "diffusion_t": np.nan,
                         "param_value": frac,
                         "param_key": "fraction",
                     }
                 )
-        rows.append(
-            {
-                "dataset_id": "ds1",
-                "model": "pca",
-                "intervention_id": "ref",
-                "intervention_name": "reference",
-                "metric_category": "cell_type_and_batch_metrics",
-                "metric_name": "cell_type_asw",
-                "space": "embedding_manipulated",
-                "value_mean": 0.8,
-                "value_std": 0.02,
-                "param_value": 0.0,
-            }
-        )
+        for model in ("pca", "scgpt"):
+            for frac in (0.5, 0.9):
+                rows.append(
+                    {
+                        "dataset_id": "ds1",
+                        "model": model,
+                        "intervention_id": f"down_{frac}",
+                        "intervention_name": "downsample",
+                        "metric_category": "bio_conservation_metrics",
+                        "metric_name": "silhouette_label",
+                        "space": "embedding_manipulated",
+                        "value_mean": 0.8,
+                        "value_std": 0.02,
+                        "param_value": frac,
+                        "param_key": "fraction",
+                    }
+                )
         return pd.DataFrame(rows)
 
     def test_average_across_datasets(self) -> None:
@@ -104,74 +103,109 @@ class TransformTest(unittest.TestCase):
 
     def test_prepare_set1_grid(self) -> None:
         df = self._toy_metrics()
-        spec = DASHBOARD_METRICS["knn_recall"]
+        spec = DASHBOARD_METRICS["viscore_local_sp"]
         layout = prepare_set1_grid(df, spec, ["pca", "scgpt"])
         self.assertIn("downsample", layout.row_labels)
         self.assertFalse(layout.data.empty)
-        self.assertEqual(layout.x_col, "k")
-        self.assertNotEqual(layout.col_labels_by_row.get("downsample"), ["all"])
+        self.assertEqual(layout.x_col, "param_value")
+        self.assertEqual(layout.col_labels_by_row.get("downsample"), ["all"])
 
-    def test_prepare_set1_grid_knn_recall_layout(self) -> None:
-        """kNN recall: columns = config, x-axis = k."""
+    def test_prepare_set1_grid_viscore_layout(self) -> None:
+        """ViScore local SP: x-axis = sweep param, single column facet."""
         rows_data = []
-        for k in (5, 15, 50):
-            for frac in (0.2, 0.8):
-                rows_data.append(
-                    {
-                        "dataset_id": "ds1",
-                        "model": "pca",
-                        "intervention_id": "down_a",
-                        "intervention_name": "downsample",
-                        "metric_category": "knn_metrics",
-                        "metric_name": "knn_recall",
-                        "space": "embedding",
-                        "value_mean": 0.01 * k,
-                        "value_std": 0.01,
-                        "k": k,
-                        "param_value": str(frac),
-                        "param_key": "fraction",
-                    }
-                )
+        for frac in (0.2, 0.8):
+            rows_data.append(
+                {
+                    "dataset_id": "ds1",
+                    "model": "pca",
+                    "intervention_id": "down_a",
+                    "intervention_name": "downsample",
+                    "metric_category": "structure_metrics",
+                    "metric_name": "viscore_local_sp",
+                    "space": "embedding",
+                    "value_mean": frac,
+                    "value_std": 0.01,
+                    "param_value": str(frac),
+                    "param_key": "fraction",
+                }
+            )
         df = pd.DataFrame(rows_data)
-        spec = DASHBOARD_METRICS["knn_recall"]
+        spec = DASHBOARD_METRICS["viscore_local_sp"]
         layout = prepare_set1_grid(df, spec, ["pca"])
-        self.assertEqual(layout.x_col, "k")
-        self.assertEqual(layout.col_labels_by_row["downsample"], ["0.2", "0.8"])
+        self.assertEqual(layout.x_col, "param_value")
+        self.assertEqual(layout.col_labels_by_row["downsample"], ["all"])
 
-    def test_prepare_set1_grid_kl_layout(self) -> None:
-        """KL/JS: columns = manipulation config, x-axis = diffusion_t."""
+    def test_prepare_set1_grid_distcorr_layout(self) -> None:
+        """DistCorr: x-axis = sweep param, single column facet."""
         rows_data = []
-        for t in (1.0, 2.0, 4.0):
-            for frac in (0.2, 0.5, 0.8):
-                rows_data.append(
-                    {
-                        "dataset_id": "ds1",
-                        "model": "pca",
-                        "intervention_id": "down_a",
-                        "intervention_name": "downsample",
-                        "metric_category": "knn_metrics",
-                        "metric_name": "diffusion_sym_kl",
-                        "space": "embedding",
-                        "value_mean": 0.1 * t,
-                        "value_std": 0.01,
-                        "k": 15,
-                        "diffusion_t": t,
-                        "param_value": str(frac),
-                        "param_key": "fraction",
-                    }
-                )
+        for frac in (0.2, 0.5, 0.8):
+            rows_data.append(
+                {
+                    "dataset_id": "ds1",
+                    "model": "pca",
+                    "intervention_id": "down_a",
+                    "intervention_name": "downsample",
+                    "metric_category": "structure_metrics",
+                    "metric_name": "distcorr",
+                    "space": "embedding",
+                    "value_mean": frac,
+                    "value_std": 0.01,
+                    "param_value": str(frac),
+                    "param_key": "fraction",
+                }
+            )
         df = pd.DataFrame(rows_data)
-        spec = DASHBOARD_METRICS["kl_divergence"]
+        spec = DASHBOARD_METRICS["distcorr"]
         layout = prepare_set1_grid(df, spec, ["pca"])
-        self.assertEqual(layout.x_col, "diffusion_t")
-        self.assertEqual(layout.col_labels_by_row["downsample"], ["0.2", "0.5", "0.8"])
+        self.assertEqual(layout.x_col, "param_value")
+        self.assertEqual(layout.col_labels_by_row["downsample"], ["all"])
         self.assertIn("downsample", layout.row_labels)
 
     def test_prepare_set2_correlation(self) -> None:
         df = self._toy_metrics()
-        spec = DASHBOARD_METRICS["knn_recall"]
+        spec = DASHBOARD_METRICS["viscore_local_sp"]
         wide = prepare_set2_correlation(df, spec, ["pca"])
         self.assertIn("metric_score", wide.columns)
+        self.assertIn("silhouette_score", wide.columns)
+
+    def test_prepare_set2_correlation_reference_scib(self) -> None:
+        rows = []
+        for model in ("pca", "scgpt"):
+            for frac in (0.5, 0.9):
+                rows.append(
+                    {
+                        "dataset_id": "ds1",
+                        "model": model,
+                        "intervention_id": f"down_{frac}",
+                        "intervention_name": "downsample",
+                        "metric_category": "structure_metrics",
+                        "metric_name": "viscore_local_sp",
+                        "space": "embedding",
+                        "value_mean": frac,
+                        "value_std": 0.05,
+                        "param_value": frac,
+                        "param_key": "fraction",
+                    }
+                )
+        for model in ("pca", "scgpt"):
+            rows.append(
+                {
+                    "dataset_id": "ds1",
+                    "model": model,
+                    "intervention_id": "reference",
+                    "intervention_name": "reference",
+                    "metric_category": "bio_conservation_metrics",
+                    "metric_name": "silhouette_label",
+                    "space": "embedding_reference",
+                    "value_mean": 0.8,
+                    "value_std": 0.02,
+                }
+            )
+        df = pd.DataFrame(rows)
+        spec = DASHBOARD_METRICS["viscore_local_sp"]
+        wide = prepare_set2_correlation(df, spec, ["pca", "scgpt"])
+        self.assertIn("silhouette_score", wide.columns)
+        self.assertTrue(wide["silhouette_score"].notna().all())
 
     def test_model_colors_cover_registry(self) -> None:
         for m in MODEL_ORDER:

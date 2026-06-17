@@ -102,55 +102,38 @@ class DashboardMetric:
 
 
 DASHBOARD_METRICS: dict[str, DashboardMetric] = {
-    "kl_divergence": DashboardMetric(
-        key="kl_divergence",
-        label="Symmetric KL divergence",
+    "viscore_local_sp": DashboardMetric(
+        key="viscore_local_sp",
+        label="ViScore local SP",
         description=(
-            "Symmetric KL between PHATE-style kNN random-walk transition distributions "
-            "in embedding space (ref vs manipulated). Lower is better."
+            "ViScore local structure preservation (Sl): AUC of the R_NX curve with log K axis. "
+            "Higher is better; bounded in [-1, 1]."
         ),
-        metric_category="knn_metrics",
-        metric_name="diffusion_sym_kl",
+        metric_category="structure_metrics",
+        metric_name="viscore_local_sp",
         space="embedding",
-        default_k=15,
-        default_diffusion_t=10,
     ),
-    "js_divergence": DashboardMetric(
-        key="js_divergence",
-        label="Jensen–Shannon divergence",
+    "viscore_global_sp": DashboardMetric(
+        key="viscore_global_sp",
+        label="ViScore global SP",
         description=(
-            "JS divergence between diffusion transition distributions in embedding space. "
-            "Lower indicates closer neighborhood structure."
+            "ViScore global structure preservation (Sg): AUC of the R_NX curve with linear K axis. "
+            "Higher is better; bounded in [-1, 1]."
         ),
-        metric_category="knn_metrics",
-        metric_name="diffusion_js",
+        metric_category="structure_metrics",
+        metric_name="viscore_global_sp",
         space="embedding",
-        default_k=15,
-        default_diffusion_t=10,
     ),
-    "knn_recall": DashboardMetric(
-        key="knn_recall",
-        label="kNN recall",
+    "distcorr": DashboardMetric(
+        key="distcorr",
+        label="Distance correlation",
         description=(
-            "Fraction of reference kNN neighbors preserved in the manipulated embedding "
-            "(per cell, averaged). Higher is better."
+            "Székely distance correlation between reference and manipulated distance matrices. "
+            "Higher is better."
         ),
-        metric_category="knn_metrics",
-        metric_name="knn_recall",
+        metric_category="structure_metrics",
+        metric_name="distcorr",
         space="embedding",
-        default_k=15,
-    ),
-    "trustworthiness": DashboardMetric(
-        key="trustworthiness",
-        label="Trustworthiness",
-        description=(
-            "Venna & Kaski trustworthiness: how well reference kNN neighborhoods are preserved "
-            "in the manipulated space (sklearn.manifold.trustworthiness). Higher is better."
-        ),
-        metric_category="neighborhood_preservation_metrics",
-        metric_name="trustworthiness",
-        space="embedding",
-        default_k=15,
     ),
     "clustering_ari": DashboardMetric(
         key="clustering_ari",
@@ -175,15 +158,15 @@ DEFAULT_PLOT_SCALE = 1.25
 PLOT_SET_DESCRIPTIONS = {
     "set1": (
         "Grid layout: **rows** = manipulation type; **columns** = manipulation config "
-        "(e.g. fraction, dropout rate, shuffle variant); **x-axis** = diffusion time *t* "
-        "for KL/JS, **k** for kNN recall and trustworthiness, or the relevant sweep for other metrics. "
+        "(e.g. fraction, dropout rate, shuffle variant); **x-axis** = sweep level for the "
+        "selected metric. "
         "Colored lines = models. "
         "Bands = mean ± 1 std across cells; dashed = permutation null mean."
     ),
     "set2": (
-        "Integration vs structure: each point is one run (cell-type ASW, graph connectivity, "
-        "batch iLISI). Lines connect points within the same manipulation. Correlation and "
-        "p-value are Pearson on displayed points."
+        "Integration vs structure: each point is one run (scIB bio/batch scores on the "
+        "manipulated embedding). Lines connect points within the same manipulation. "
+        "Correlation and p-value are Pearson on displayed points."
     ),
     "set3": (
         "Columns = manipulation; x-axis = sweep level (numeric fraction/rate/k or shuffle "

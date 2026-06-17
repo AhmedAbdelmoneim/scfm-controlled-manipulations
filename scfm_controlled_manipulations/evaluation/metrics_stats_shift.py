@@ -6,30 +6,18 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
+from scipy.spatial.distance import pdist
+from scipy.stats import pearsonr
 
 from scfm_controlled_manipulations.evaluation.metrics_common import (
     distribution_summary,
     make_metric_row,
+    scalar_summary,
 )
-
-
-def _row_norms_csr(x: sp.csr_matrix) -> np.ndarray:
-    return np.sqrt(x.multiply(x).sum(axis=1)).A1
-
-
-def _col_means_csr(x: sp.csr_matrix) -> np.ndarray:
-    return np.asarray(x.mean(axis=0)).ravel()
 
 
 def _col_means_dense(x: np.ndarray) -> np.ndarray:
     return np.asarray(np.mean(x, axis=0)).ravel()
-
-
-def _col_variances_csr(x: sp.csr_matrix) -> np.ndarray:
-    col_means = _col_means_csr(x)
-    col_means_sq = np.asarray(x.power(2).mean(axis=0)).ravel()
-    return col_means_sq - col_means**2
 
 
 def _col_variances_dense(x: np.ndarray) -> np.ndarray:
@@ -66,30 +54,12 @@ def _pairwise_l2_dense(
     return np.linalg.norm(sub[i_idx] - sub[j_idx], axis=1)
 
 
-def _pairwise_l2_sparse(
-    sub: sp.csr_matrix, *, max_pairs: int | None = None, seed: int = 0
-) -> np.ndarray:
-    return _pairwise_l2_dense(
-        np.asarray(sub.toarray(), dtype=np.float64), max_pairs=max_pairs, seed=seed
-    )
-
-
 def _paired_cell_l2_norms_dense(ref: np.ndarray, man: np.ndarray) -> np.ndarray:
     return np.linalg.norm(man - ref, axis=1)
 
 
-def _paired_cell_l2_norms_sparse(ref: sp.csr_matrix, man: sp.csr_matrix) -> np.ndarray:
-    return _row_norms_csr((man - ref).tocsr())
-
-
 def _shifts_dense_sub(ref_sub: np.ndarray, man_sub: np.ndarray) -> np.ndarray:
     return np.asarray(man_sub - ref_sub, dtype=np.float64)
-
-
-def _shifts_sparse_sub(ref_sub: sp.csr_matrix, man_sub: sp.csr_matrix) -> np.ndarray:
-    return np.asarray(man_sub.toarray(), dtype=np.float64) - np.asarray(
-        ref_sub.toarray(), dtype=np.float64
-    )
 
 
 def _pairwise_cosine_dense(
@@ -115,7 +85,6 @@ def _append_stats_rows(
     model: str,
     intervention_id: str,
     intervention_name: str,
-    space: str,
     n_cells: int,
     seed: int,
     ref_row_norms: np.ndarray,
@@ -131,7 +100,7 @@ def _append_stats_rows(
         intervention_id=intervention_id,
         intervention_name=intervention_name,
         category="embedding_stats",
-        space=space,
+        space="embedding",
         n_cells=n_cells,
         seed=seed,
     )
@@ -170,57 +139,49 @@ def compute_embedding_stats(
     ref_cache: Any | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    n = bundle.emb_ref.shape[0]
+    ref = bundle.emb_ref
+    man = bundle.emb_man
+    n = ref.shape[0]
 
-    for space, ref, man in (
-        ("raw", bundle.raw_ref, bundle.raw_man),
-        ("embedding", bundle.emb_ref, bundle.emb_man),
-    ):
-        if ref_cache is not None:
-            if space == "raw":
-                ref_row_norms = ref_cache.raw_ref_row_norms
-                ref_col_means = ref_cache.raw_col_means
-                ref_col_variances = ref_cache.raw_col_variances
-            else:
-                ref_row_norms = ref_cache.emb_ref_row_norms
-                ref_col_means = ref_cache.emb_col_means
-                ref_col_variances = ref_cache.emb_col_variances
-        elif space == "raw":
-            ref_row_norms = _row_norms_csr(ref)
-            ref_col_means = _col_means_csr(ref)
-            ref_col_variances = _col_variances_csr(ref)
-        else:
-            ref_row_norms = np.linalg.norm(ref, axis=1)
-            ref_col_means = _col_means_dense(ref)
-            ref_col_variances = _col_variances_dense(ref)
+    if ref_cache is not None:
+        ref_row_norms = ref_cache.emb_ref_row_norms
+        ref_col_means = ref_cache.emb_col_means
+        ref_col_variances = ref_cache.emb_col_variances
+    else:
+        ref_row_norms = np.linalg.norm(ref, axis=1)
+        ref_col_means = _col_means_dense(ref)
+        ref_col_variances = _col_variances_dense(ref)
 
-        if space == "raw":
-            man_row_norms = _row_norms_csr(man)
-            man_col_means = _col_means_csr(man)
-            man_col_variances = _col_variances_csr(man)
-        else:
-            man_row_norms = np.linalg.norm(man, axis=1)
-            man_col_means = _col_means_dense(man)
-            man_col_variances = _col_variances_dense(man)
+    man_row_norms = np.linalg.norm(man, axis=1)
+    man_col_means = _col_means_dense(man)
+    man_col_variances = _col_variances_dense(man)
 
-        _append_stats_rows(
-            rows,
-            dataset_id=dataset_id,
-            model=model,
-            intervention_id=intervention_id,
-            intervention_name=intervention_name,
-            space=space,
-            n_cells=n,
-            seed=seed,
-            ref_row_norms=ref_row_norms,
-            man_row_norms=man_row_norms,
-            ref_col_means=ref_col_means,
-            man_col_means=man_col_means,
-            ref_col_variances=ref_col_variances,
-            man_col_variances=man_col_variances,
-        )
+    _append_stats_rows(
+        rows,
+        dataset_id=dataset_id,
+        model=model,
+        intervention_id=intervention_id,
+        intervention_name=intervention_name,
+        n_cells=n,
+        seed=seed,
+        ref_row_norms=ref_row_norms,
+        man_row_norms=man_row_norms,
+        ref_col_means=ref_col_means,
+        man_col_means=man_col_means,
+        ref_col_variances=ref_col_variances,
+        man_col_variances=man_col_variances,
+    )
 
     return pd.DataFrame(rows)
+
+
+def global_distance_correlation(ref: np.ndarray, man: np.ndarray, *, metric: str) -> float:
+    """Pearson r between upper-triangle pdist vectors for ref vs man (aligned rows)."""
+    if ref.shape[0] < 2:
+        return float("nan")
+    d_ref = pdist(ref, metric=metric)
+    d_man = pdist(man, metric=metric)
+    return float(pearsonr(d_ref, d_man).statistic)
 
 
 def compute_embedding_shift(
@@ -233,124 +194,127 @@ def compute_embedding_shift(
     seed: int,
     ref_cache: Any | None = None,
     pairwise_max_pairs: int | None = None,
+    distance_correlation_subsample_n: int | None = None,
+    distance_metrics: list[str] | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    n = bundle.emb_ref.shape[0]
+    ref = bundle.emb_ref
+    man = bundle.emb_man
+    n = ref.shape[0]
     pair_seed = int(seed) + 17_001
+    space = "embedding"
 
-    for space, ref, man in (
-        ("raw", bundle.raw_ref, bundle.raw_man),
-        ("embedding", bundle.emb_ref, bundle.emb_man),
-    ):
-        if space == "raw":
-            paired_norms = _paired_cell_l2_norms_sparse(ref, man)
-        else:
-            paired_norms = _paired_cell_l2_norms_dense(ref, man)
+    paired_norms = _paired_cell_l2_norms_dense(ref, man)
 
+    if ref_cache is not None:
+        ref_within = ref_cache.emb_within_pairwise_l2
+        indices = ref_cache.pairwise_cell_indices
+    else:
+        indices = _sample_pairwise_cell_indices(n, min(n, 500), seed=seed)
+        ref_sub = ref[indices]
+        ref_within = _pairwise_l2_dense(ref_sub, max_pairs=pairwise_max_pairs, seed=pair_seed)
+
+    ref_sub = ref[indices]
+    man_sub = man[indices]
+    man_within = _pairwise_l2_dense(man_sub, max_pairs=pairwise_max_pairs, seed=pair_seed + 2)
+    shifts_sub = _shifts_dense_sub(ref_sub, man_sub)
+    shift_pairwise_cosine = _pairwise_cosine_dense(
+        shifts_sub, max_pairs=pairwise_max_pairs, seed=pair_seed + 4
+    )
+
+    base = dict(
+        dataset_id=dataset_id,
+        model=model,
+        intervention_id=intervention_id,
+        intervention_name=intervention_name,
+        category="embedding_shift",
+        space=space,
+        n_cells=n,
+        seed=seed,
+    )
+
+    rows.append(
+        make_metric_row(
+            dataset_id=base["dataset_id"],
+            model=base["model"],
+            intervention_id=base["intervention_id"],
+            intervention_name=base["intervention_name"],
+            metric_category=base["category"],
+            metric_name="paired_cell_l2_norm",
+            space=base["space"],
+            summary=distribution_summary(paired_norms),
+            n_cells=base["n_cells"],
+            seed=base["seed"],
+        )
+    )
+    rows.append(
+        make_metric_row(
+            dataset_id=base["dataset_id"],
+            model=base["model"],
+            intervention_id=base["intervention_id"],
+            intervention_name=base["intervention_name"],
+            metric_category=base["category"],
+            metric_name="within_ref_pairwise_l2",
+            space=base["space"],
+            summary=distribution_summary(ref_within),
+            n_cells=base["n_cells"],
+            seed=base["seed"],
+        )
+    )
+    rows.append(
+        make_metric_row(
+            dataset_id=base["dataset_id"],
+            model=base["model"],
+            intervention_id=base["intervention_id"],
+            intervention_name=base["intervention_name"],
+            metric_category=base["category"],
+            metric_name="within_man_pairwise_l2",
+            space=base["space"],
+            summary=distribution_summary(man_within),
+            n_cells=base["n_cells"],
+            seed=base["seed"],
+        )
+    )
+    rows.append(
+        make_metric_row(
+            dataset_id=base["dataset_id"],
+            model=base["model"],
+            intervention_id=base["intervention_id"],
+            intervention_name=base["intervention_name"],
+            metric_category=base["category"],
+            metric_name="shift_pairwise_cosine",
+            space=base["space"],
+            summary=distribution_summary(shift_pairwise_cosine),
+            n_cells=base["n_cells"],
+            seed=base["seed"],
+        )
+    )
+
+    if distance_correlation_subsample_n is not None and distance_metrics:
         if ref_cache is not None:
-            if space == "raw":
-                ref_within = ref_cache.raw_within_pairwise_l2
-            else:
-                ref_within = ref_cache.emb_within_pairwise_l2
-            indices = ref_cache.pairwise_cell_indices
+            dist_indices = ref_cache.pairwise_cell_indices
         else:
-            indices = _sample_pairwise_cell_indices(n, min(n, 500), seed=seed)
-            if space == "raw":
-                ref_sub = ref[indices]
-                ref_within = _pairwise_l2_sparse(
-                    ref_sub, max_pairs=pairwise_max_pairs, seed=pair_seed
+            dist_indices = _sample_pairwise_cell_indices(
+                n, distance_correlation_subsample_n, seed=seed
+            )
+        for dist_metric in distance_metrics:
+            dist_corr = global_distance_correlation(
+                ref[dist_indices], man[dist_indices], metric=dist_metric
+            )
+            rows.append(
+                make_metric_row(
+                    dataset_id=base["dataset_id"],
+                    model=base["model"],
+                    intervention_id=base["intervention_id"],
+                    intervention_name=base["intervention_name"],
+                    metric_category=base["category"],
+                    metric_name="global_distance_correlation",
+                    space=base["space"],
+                    summary=scalar_summary(dist_corr),
+                    n_cells=base["n_cells"],
+                    seed=base["seed"],
+                    extra={"distance_metric": dist_metric},
                 )
-            else:
-                ref_sub = ref[indices]
-                ref_within = _pairwise_l2_dense(
-                    ref_sub, max_pairs=pairwise_max_pairs, seed=pair_seed
-                )
-
-        if space == "raw":
-            ref_sub = ref[indices]
-            man_sub = man[indices]
-            man_within = _pairwise_l2_sparse(
-                man_sub, max_pairs=pairwise_max_pairs, seed=pair_seed + 2
             )
-            shifts_sub = _shifts_sparse_sub(ref_sub, man_sub)
-        else:
-            ref_sub = ref[indices]
-            man_sub = man[indices]
-            man_within = _pairwise_l2_dense(
-                man_sub, max_pairs=pairwise_max_pairs, seed=pair_seed + 2
-            )
-            shifts_sub = _shifts_dense_sub(ref_sub, man_sub)
-
-        shift_pairwise_cosine = _pairwise_cosine_dense(
-            shifts_sub, max_pairs=pairwise_max_pairs, seed=pair_seed + 4
-        )
-
-        base = dict(
-            dataset_id=dataset_id,
-            model=model,
-            intervention_id=intervention_id,
-            intervention_name=intervention_name,
-            category="embedding_shift",
-            space=space,
-            n_cells=n,
-            seed=seed,
-        )
-
-        rows.append(
-            make_metric_row(
-                dataset_id=base["dataset_id"],
-                model=base["model"],
-                intervention_id=base["intervention_id"],
-                intervention_name=base["intervention_name"],
-                metric_category=base["category"],
-                metric_name="paired_cell_l2_norm",
-                space=base["space"],
-                summary=distribution_summary(paired_norms),
-                n_cells=base["n_cells"],
-                seed=base["seed"],
-            )
-        )
-        rows.append(
-            make_metric_row(
-                dataset_id=base["dataset_id"],
-                model=base["model"],
-                intervention_id=base["intervention_id"],
-                intervention_name=base["intervention_name"],
-                metric_category=base["category"],
-                metric_name="within_ref_pairwise_l2",
-                space=base["space"],
-                summary=distribution_summary(ref_within),
-                n_cells=base["n_cells"],
-                seed=base["seed"],
-            )
-        )
-        rows.append(
-            make_metric_row(
-                dataset_id=base["dataset_id"],
-                model=base["model"],
-                intervention_id=base["intervention_id"],
-                intervention_name=base["intervention_name"],
-                metric_category=base["category"],
-                metric_name="within_man_pairwise_l2",
-                space=base["space"],
-                summary=distribution_summary(man_within),
-                n_cells=base["n_cells"],
-                seed=base["seed"],
-            )
-        )
-        rows.append(
-            make_metric_row(
-                dataset_id=base["dataset_id"],
-                model=base["model"],
-                intervention_id=base["intervention_id"],
-                intervention_name=base["intervention_name"],
-                metric_category=base["category"],
-                metric_name="shift_pairwise_cosine",
-                space=base["space"],
-                summary=distribution_summary(shift_pairwise_cosine),
-                n_cells=base["n_cells"],
-                seed=base["seed"],
-            )
-        )
 
     return pd.DataFrame(rows)

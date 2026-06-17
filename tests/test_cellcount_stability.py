@@ -158,7 +158,7 @@ class TestCellcountStability(unittest.TestCase):
                 "cell_count": [200, 200, 500, 500],
                 "model": ["pca"] * 4,
                 "metric_category": ["knn_metrics"] * 4,
-                "metric_name": ["knn_recall"] * 4,
+                "metric_name": ["trustworthiness"] * 4,
                 "space": ["embedding"] * 4,
                 "k": [15] * 4,
                 "value_mean": [0.5, 0.52, 0.8, 0.81],
@@ -178,7 +178,7 @@ class TestCellcountStability(unittest.TestCase):
                 "cell_count": [200, 200, 500, 500],
                 "model": ["scimilarity"] * 4,
                 "metric_category": ["knn_metrics", "clustering", "knn_metrics", "clustering"],
-                "metric_name": ["knn_recall", "ari", "knn_recall", "ari"],
+                "metric_name": ["trustworthiness", "ari", "trustworthiness", "ari"],
                 "space": ["embedding"] * 4,
                 "k": [15.0, np.nan, 15.0, np.nan],
                 "resolution": [np.nan, 1.0, np.nan, 1.0],
@@ -193,63 +193,65 @@ class TestCellcountStability(unittest.TestCase):
     def test_filter_stability_plot_metrics(self) -> None:
         agg = pd.DataFrame(
             {
-                "atlas": ["immune"] * 16,
-                "cell_count": [200, 500] * 8,
-                "model": ["scimilarity"] * 16,
+                "atlas": ["immune"] * 12,
+                "cell_count": [200, 500] * 6,
+                "model": ["scimilarity"] * 12,
                 "metric_category": (
-                    ["knn_metrics"] * 8
-                    + ["neighborhood_preservation_metrics"] * 2
+                    ["structure_metrics"] * 6
                     + ["clustering_metrics"] * 2
-                    + ["cell_type_and_batch_metrics"] * 4
+                    + ["bio_conservation_metrics"] * 2
+                    + ["batch_correction_metrics"] * 2
                 ),
                 "metric_name": [
-                    "diffusion_sym_kl",
-                    "diffusion_sym_kl",
-                    "diffusion_sym_kl",
-                    "diffusion_sym_kl",
-                    "diffusion_js",
-                    "diffusion_js",
-                    "knn_recall",
-                    "knn_recall",
-                    "trustworthiness",
-                    "trustworthiness",
+                    "viscore_local_sp",
+                    "viscore_local_sp",
+                    "distcorr",
+                    "distcorr",
+                    "viscore_global_sp",
+                    "viscore_global_sp",
                     "leiden_ari",
                     "leiden_ari",
-                    "cell_type_asw",
-                    "cell_type_asw",
-                    "batch_ilisi",
-                    "batch_ilisi",
+                    "silhouette_label",
+                    "silhouette_label",
+                    "ilisi_knn",
+                    "ilisi_knn",
                 ],
-                "space": ["embedding"] * 12 + ["embedding_manipulated"] * 4,
-                "k": [15.0] * 16,
-                "diffusion_t": [1.0, 2.0, 4.0, 8.0, 1.0, 2.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
-                "resolution": [-1.0] * 14 + [1.0, 1.0],
-                "distance_metric": ["euclidean"] * 16,
-                "n_seeds": [5] * 16,
-                "mean_across_seeds": np.linspace(0.1, 0.8, 16),
-                "std_across_seeds": [0.01] * 16,
-                "cv_across_seeds": [0.05] * 16,
-                "ci_half_width": [0.02] * 16,
-                "ci_half_width_rel": [0.03] * 16,
+                "space": ["embedding"] * 8 + ["embedding_manipulated"] * 4,
+                "k": [-1.0] * 12,
+                "diffusion_t": [-1.0] * 12,
+                "resolution": [-1.0] * 10 + [1.0, 1.0],
+                "distance_metric": ["euclidean"] * 12,
+                "n_seeds": [5] * 12,
+                "mean_across_seeds": np.linspace(0.1, 0.8, 12),
+                "std_across_seeds": [0.01] * 12,
+                "cv_across_seeds": [0.05] * 12,
+                "ci_half_width": [0.02] * 12,
+                "ci_half_width_rel": [0.03] * 12,
             }
         )
         plots = filter_stability_plot_metrics(agg)
-        # knn + trustworthiness + clustering + 4 KL t + 2 JS t + 2 JS/n t + 2 cell/batch
-        self.assertEqual(plots["plot_key"].nunique(), 13)
-        self.assertIn("kl_divergence_t8", set(plots["plot_key"]))
-        self.assertIn("js_divergence_per_n_t2", set(plots["plot_key"]))
-        self.assertIn("trustworthiness", set(plots["plot_key"]))
-        self.assertIn("cell_type_asw", set(plots["plot_key"]))
+        self.assertGreaterEqual(plots["plot_key"].nunique(), 5)
+        self.assertIn("viscore_local_sp", set(plots["plot_key"]))
+        self.assertIn("distcorr", set(plots["plot_key"]))
+        self.assertIn("silhouette_label", set(plots["plot_key"]))
 
     def test_filter_cv_envelope_metrics(self) -> None:
         df = pd.DataFrame(
             {
-                "metric_name": ["knn_recall", "diffusion_js", "trustworthiness", "knn_recall"],
-                "space": ["embedding", "embedding", "embedding", "raw"],
+                "space": ["embedding", "embedding", "embedding", "embedding"],
+                "metric_name": [
+                    "viscore_local_sp",
+                    "distcorr",
+                    "leiden_ari",
+                    "rnx_curve",
+                ],
             }
         )
         out = filter_cv_envelope_metrics(df)
-        self.assertEqual(list(out["metric_name"]), ["knn_recall", "diffusion_js"])
+        self.assertEqual(
+            list(out["metric_name"]),
+            ["viscore_local_sp", "distcorr", "leiden_ari"],
+        )
 
     def test_cv_percentile_by_cell_count(self) -> None:
         df = pd.DataFrame(

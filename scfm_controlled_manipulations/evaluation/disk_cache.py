@@ -32,6 +32,7 @@ def write_pickle_cache(path: Path, value: T) -> None:
 
 
 def _write_pickle_atomic(path: Path, value: T) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.stem}_", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as tmp_handle:

@@ -112,8 +112,6 @@ class LeidenCache:
     ) -> dict[tuple[int, str, int, float, int], np.ndarray]:
         return self._labels
 
-    def __setstate__(
-        self, state: dict[tuple[int, str, int, float, int], np.ndarray]
-    ) -> None:
+    def __setstate__(self, state: dict[tuple[int, str, int, float, int], np.ndarray]) -> None:
         self._labels = state
         self._lock = threading.Lock()

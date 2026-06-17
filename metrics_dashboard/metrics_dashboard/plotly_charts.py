@@ -18,7 +18,7 @@ from metrics_dashboard.config import (
 from metrics_dashboard.plot_helpers import prepend_reference_points, set1_column_title
 from metrics_dashboard.style import streamlit_is_dark
 from metrics_dashboard.sweep_axis import sweep_x_positions
-from metrics_dashboard.transforms import Set1GridLayout, sort_models, std_bounds
+from metrics_dashboard.transforms import SET2_SCIB_METRICS, Set1GridLayout, sort_models, std_bounds
 
 
 def _plotly_template() -> str:
@@ -242,16 +242,19 @@ def plot_set2_correlation_plotly(
     scale: float = 1.0,
 ) -> go.Figure:
     palette = model_palette(models)
+    panels = [
+        (col, title)
+        for _metric_name, col, title in SET2_SCIB_METRICS
+        if col in wide.columns and wide[col].notna().any()
+    ]
+    if not panels:
+        panels = [("metric_score", "Metric score")]
     fig = make_subplots(
         rows=1,
-        cols=3,
-        subplot_titles=["Cell-type ASW", "Graph connectivity", "Batch iLISI"],
+        cols=len(panels),
+        subplot_titles=[title for _col, title in panels],
     )
-    pairs = [
-        ("metric_score", "cell_type_score"),
-        ("metric_score", "graph_connectivity_score"),
-        ("metric_score", "batch_score"),
-    ]
+    pairs = [("metric_score", col) for col, _title in panels]
     legend_shown = False
     for col_idx, (xc, yc) in enumerate(pairs, start=1):
         if xc not in wide.columns or yc not in wide.columns:

@@ -81,7 +81,6 @@ class ContextLoadingTest(unittest.TestCase):
                 model="pca",
                 intervention_id=iid,
             )
-            self.assertEqual(bundle.raw_ref.shape[0], 8)
             self.assertEqual(bundle.emb_man.shape, (8, 3))
             self.assertTrue(np.all(dataset_ctx.obs.index == obs_names))
             self.assertEqual(

@@ -64,10 +64,15 @@ CONFIG ?= configs/default.yaml
 manipulate:
 	uv run python -m scfm_controlled_manipulations.pipeline manipulate --config $(CONFIG)
 
-## Paired structure metrics (raw + embedding vs reference) into results_dir/evaluation
+## Paired structure metrics (embedding vs reference) into results_dir/evaluation
 .PHONY: evaluate
 evaluate:
 	@scripts/run_evaluate.sh $(CONFIG)
+
+## Reference-only scIB bio/batch metrics into results_dir/evaluation/{model}_scib_metrics.csv
+.PHONY: evaluate-scib
+evaluate-scib:
+	@scripts/run_evaluate_scib.sh $(CONFIG)
 
 ## Profile evaluate on a synthetic fixture (see scripts/benchmark_eval.py)
 .PHONY: benchmark-eval

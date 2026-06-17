@@ -115,19 +115,16 @@ try:
         if wide.empty or "metric_score" not in wide.columns:
             st.info("Insufficient data for correlation plots.")
         else:
-            if "cell_type_score" not in wide.columns or wide["cell_type_score"].notna().sum() == 0:
+            scib_cols = [
+                col
+                for col in ("silhouette_score", "graph_connectivity_score", "ilisi_score")
+                if col in wide.columns and wide[col].notna().any()
+            ]
+            if not scib_cols:
                 st.warning(
-                    "Cell-type ASW is missing from this bundle (evaluation did not find a "
-                    "cell-type column in reference `obs`, e.g. `cell_type` vs `celltype`). "
-                    "Re-run `make evaluate` after fixing `evaluation.cell_type_col`, then re-export."
-                )
-            if (
-                "graph_connectivity_score" not in wide.columns
-                or wide["graph_connectivity_score"].notna().sum() == 0
-            ):
-                st.warning(
-                    "Graph connectivity is missing from this bundle (requires `cell_type_col` "
-                    "and a recent `make evaluate`). Re-export the dashboard bundle after re-evaluating."
+                    "scIB bio/batch scores are missing from this bundle (requires "
+                    "`cell_type_col` and `batch_col` in reference `obs` and "
+                    "`make evaluate-scib`). Re-export the dashboard bundle after running it."
                 )
             fig2 = plot_set2_correlation_plotly(
                 wide,
