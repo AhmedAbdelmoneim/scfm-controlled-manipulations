@@ -63,6 +63,7 @@ class SharedEvalPayload:
     """Pickle-friendly paths for spawn-based workers."""
 
     results_dir: str
+    manipulations_dir: str
     embeddings_root: str
     model: str
     ref_id: str
@@ -227,7 +228,7 @@ def worker_initializer_spawn(payload: SharedEvalPayload) -> None:
             path,
         )
 
-    dataset_ctx = load_dataset_context(Path(payload.results_dir))
+    dataset_ctx = load_dataset_context(Path(payload.results_dir), Path(payload.manipulations_dir))
     shared = build_shared_context(
         dataset_ctx=dataset_ctx,
         results_dir=Path(payload.results_dir),

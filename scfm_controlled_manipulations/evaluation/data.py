@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
+from scfm_controlled_manipulations.io import manipulations_dir
+
 
 @dataclass(frozen=True)
 class AlignedBundle:
@@ -91,8 +93,12 @@ def _as_float_csr(x: Any) -> sp.csr_matrix:
     return sp.csr_matrix(np.asarray(x, dtype=np.float64))
 
 
-def load_manipulation_counts(results_dir: Path, intervention_id: str) -> sp.csr_matrix:
+def load_manipulation_counts(
+    results_dir: Path,
+    intervention_id: str,
+    manipulations_dir_path: Path | None = None,
+) -> sp.csr_matrix:
     """Load count matrix from a manipulation h5ad (used by scib-metrics only)."""
-    path = results_dir / "manipulations" / f"{intervention_id}.h5ad"
+    path = manipulations_dir(results_dir, manipulations_dir_path) / f"{intervention_id}.h5ad"
     adata = read_h5ad_for_eval(path)
     return _as_float_csr(adata.X)

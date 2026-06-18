@@ -25,6 +25,7 @@ from scfm_controlled_manipulations.evaluation.run_scib import run_evaluate_scib
 from scfm_controlled_manipulations.io import (
     intervention_id,
     manipulation_path,
+    manipulations_dir,
 )
 from scfm_controlled_manipulations.qc import filter_zero_count_cells
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
@@ -291,6 +292,7 @@ def _write_embedding_inputs(
 def _apply_and_write_manipulation(
     adata_in: ad.AnnData,
     results_dir: Path,
+    manip_dir: Path,
     spec: Mapping[str, Any],
     seed: int | None,
     output_options: Mapping[str, Any],
@@ -298,7 +300,7 @@ def _apply_and_write_manipulation(
     name = str(spec["name"])
     kwargs = dict(spec.get("kwargs") or {})
     iid = intervention_id(name, kwargs)
-    out_path = manipulation_path(results_dir, iid)
+    out_path = manipulation_path(results_dir, iid, manip_dir)
     if out_path.exists() and not output_options.get("overwrite", True):
         logger.debug("Skipping existing manipulation %s at %s", iid, out_path)
         return {
@@ -352,6 +354,7 @@ def _apply_and_write_manipulation_worker(task: Mapping[str, Any]) -> dict[str, A
     return _apply_and_write_manipulation(
         _WORKER_ADATA,
         Path(task["results_dir"]),
+        Path(task["manip_dir"]),
         task["spec"],
         task["seed"],
         task["output_options"],
@@ -418,12 +421,12 @@ def run_manipulate(config: dict[str, Any]) -> None:
     """Apply each configured intervention and write ``manipulations/{intervention_id}.h5ad``."""
     input_path = Path(config["input_h5ad"])
     results_dir = Path(config["results_dir"])
+    manip_dir = manipulations_dir(results_dir, config.get("manipulations_dir"))
     seed = config.get("seed")
     output_options = _output_options(config)
     specs = expand_intervention_specs(config["interventions"])
     workers = max(1, int(config.get("manipulation_workers", 1)))
 
-    manip_dir = results_dir / "manipulations"
     manip_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
@@ -432,9 +435,10 @@ def run_manipulate(config: dict[str, Any]) -> None:
         workers,
     )
     logger.info(
-        "Input=%s results_dir=%s",
+        "Input=%s results_dir=%s manipulations_dir=%s",
         input_path,
         results_dir,
+        manip_dir,
     )
     if workers == 1:
         adata_in = _prepare_reference_phase(
@@ -446,7 +450,7 @@ def run_manipulate(config: dict[str, Any]) -> None:
         )
         for index, spec in enumerate(specs, start=1):
             result = _apply_and_write_manipulation(
-                adata_in, results_dir, spec, seed, output_options
+                adata_in, results_dir, manip_dir, spec, seed, output_options
             )
             _log_manipulation_progress(index, len(specs), result)
         logger.info("Finished manipulation run: %d/%d variants complete", len(specs), len(specs))
@@ -468,6 +472,7 @@ def run_manipulate(config: dict[str, Any]) -> None:
     tasks = [
         {
             "results_dir": str(results_dir),
+            "manip_dir": str(manip_dir),
             "spec": spec,
             "seed": seed,
             "output_options": output_options,

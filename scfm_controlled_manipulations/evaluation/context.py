@@ -21,7 +21,7 @@ from scfm_controlled_manipulations.evaluation.data import (
     read_h5ad_for_eval,
 )
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
-from scfm_controlled_manipulations.io import embedding_path
+from scfm_controlled_manipulations.io import embedding_path, manipulations_dir
 
 
 @dataclass
@@ -41,8 +41,11 @@ class ModelEvaluateContext:
     ref_stats_cache: ReferenceStatsShiftCache | None = None
 
 
-def load_dataset_context(results_dir: Path) -> DatasetEvaluateContext:
-    ref_path = results_dir / "manipulations" / "reference.h5ad"
+def load_dataset_context(
+    results_dir: Path,
+    manipulations_dir_path: Path | None = None,
+) -> DatasetEvaluateContext:
+    ref_path = manipulations_dir(results_dir, manipulations_dir_path) / "reference.h5ad"
     ad_ref = read_h5ad_for_eval(ref_path)
     return DatasetEvaluateContext(
         obs=ad_ref.obs.copy(),
