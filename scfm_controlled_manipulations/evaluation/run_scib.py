@@ -31,6 +31,7 @@ from scfm_controlled_manipulations.io import (
     embedding_path,
     evaluation_dir,
     evaluation_scib_metrics_csv_path,
+    manipulations_dir,
 )
 from scfm_controlled_manipulations.obs_columns import (
     resolve_batch_column,
@@ -46,6 +47,7 @@ def run_evaluate_scib(cfg: dict[str, Any]) -> None:
     run_started = time.perf_counter()
 
     results_dir = Path(cfg["results_dir"])
+    manip_dir = manipulations_dir(results_dir, cfg.get("manipulations_dir"))
     embeddings_root = Path(cfg["embeddings_root"])
     ref_id = reference_intervention_id(cfg)
     seed = int(cfg.get("seed", 42))
@@ -58,15 +60,16 @@ def run_evaluate_scib(cfg: dict[str, Any]) -> None:
     evaluation_dir(results_dir).mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Evaluate-scib: dataset_id=%s results_dir=%s embeddings_root=%s ref_id=%s",
+        "Evaluate-scib: dataset_id=%s results_dir=%s manipulations_dir=%s embeddings_root=%s ref_id=%s",
         dataset_id,
         results_dir,
+        manip_dir,
         embeddings_root,
         ref_id,
     )
 
     t0 = time.perf_counter()
-    dataset_ctx = load_dataset_context(results_dir)
+    dataset_ctx = load_dataset_context(results_dir, manip_dir)
     obs_cols = dataset_ctx.obs.columns
     cell_type_col = resolve_cell_type_column_for_dataset(
         obs_cols,
@@ -124,7 +127,7 @@ def run_evaluate_scib(cfg: dict[str, Any]) -> None:
             embeddings_root, model, ref_id, target_obs=dataset_ctx.obs.index
         )
         rows = compute_cell_batch_reference_rows(
-            counts=load_manipulation_counts(results_dir, ref_id),
+            counts=load_manipulation_counts(results_dir, ref_id, manip_dir),
             mat=model_ctx.emb_ref,
             obs_df=dataset_ctx.obs,
             space_label="embedding_reference",

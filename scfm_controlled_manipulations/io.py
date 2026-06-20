@@ -17,10 +17,27 @@ def intervention_id(name: str, kwargs: dict[str, Any]) -> str:
     return f"{name}_{kwargs_hash(kwargs)}"
 
 
-def manipulation_path(results_dir: str | Path, intervention_id: str) -> Path:
-    """Manipulated AnnData: ``{results_dir}/manipulations/{intervention_id}.h5ad``."""
-    root = Path(results_dir)
-    return root / "manipulations" / f"{intervention_id}.h5ad"
+def manipulations_dir(
+    results_dir: str | Path,
+    configured_dir: str | Path | None = None,
+) -> Path:
+    """Directory containing manipulation h5ads.
+
+    Defaults to the historical ``{results_dir}/manipulations`` layout.
+    """
+    if configured_dir is not None:
+        return Path(configured_dir)
+    return Path(results_dir) / "manipulations"
+
+
+def manipulation_path(
+    results_dir: str | Path,
+    intervention_id: str,
+    manipulations_dir_path: str | Path | None = None,
+) -> Path:
+    """Manipulated AnnData path for ``intervention_id``."""
+    root = manipulations_dir(results_dir, manipulations_dir_path)
+    return root / f"{intervention_id}.h5ad"
 
 
 def embedding_path(embeddings_root: str | Path, model: str, intervention_id: str) -> Path:
@@ -53,9 +70,12 @@ def evaluation_cache_dir(results_dir: str | Path) -> Path:
     return Path(results_dir) / "evaluation_cache"
 
 
-def list_manipulation_ids(results_dir: str | Path) -> list[str]:
-    """Stem names of ``manipulations/*.h5ad`` excluding ``reference``."""
-    manip_dir = Path(results_dir) / "manipulations"
+def list_manipulation_ids(
+    results_dir: str | Path,
+    manipulations_dir_path: str | Path | None = None,
+) -> list[str]:
+    """Stem names of manipulation h5ads excluding ``reference``."""
+    manip_dir = manipulations_dir(results_dir, manipulations_dir_path)
     if not manip_dir.is_dir():
         return []
     ids = sorted(p.stem for p in manip_dir.glob("*.h5ad") if p.is_file() and p.stem != "reference")

@@ -35,6 +35,7 @@ from scfm_controlled_manipulations.io import (
     evaluation_metrics_csv_path,
     intervention_id,
     manipulation_path,
+    manipulations_dir,
 )
 from scfm_controlled_manipulations.sweep_config import (
     expand_intervention_specs,
@@ -148,6 +149,7 @@ def _planned_interventions(
     *,
     ref_id: str,
     results_dir: Path,
+    manip_dir: Path,
     embeddings_root: Path,
     model: str,
 ) -> list[tuple[str, str, dict[str, Any]]]:
@@ -159,7 +161,7 @@ def _planned_interventions(
         iid = intervention_id(name, kwargs)
         if iid == ref_id:
             continue
-        if not manipulation_path(results_dir, iid).is_file():
+        if not manipulation_path(results_dir, iid, manip_dir).is_file():
             continue
         if embedding_path(embeddings_root, model, iid).is_file():
             planned.append((name, iid, spec))
@@ -205,6 +207,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     run_started = time.perf_counter()
 
     results_dir = Path(cfg["results_dir"])
+    manip_dir = manipulations_dir(results_dir, cfg.get("manipulations_dir"))
     embeddings_root = Path(cfg["embeddings_root"])
     ref_id = reference_intervention_id(cfg)
     specs = expand_intervention_specs(cfg["interventions"])
@@ -236,6 +239,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                 specs,
                 ref_id=ref_id,
                 results_dir=results_dir,
+                manip_dir=manip_dir,
                 embeddings_root=embeddings_root,
                 model=m,
             )
@@ -244,9 +248,10 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     )
 
     logger.info(
-        "Evaluate: dataset_id=%s results_dir=%s embeddings_root=%s",
+        "Evaluate: dataset_id=%s results_dir=%s manipulations_dir=%s embeddings_root=%s",
         dataset_id,
         results_dir,
+        manip_dir,
         embeddings_root,
     )
     mp_method = mp.get_context("spawn").get_start_method()
@@ -272,7 +277,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
 
     logger.info("Loading shared reference obs (once per dataset)")
     t0 = time.perf_counter()
-    dataset_ctx = load_dataset_context(results_dir)
+    dataset_ctx = load_dataset_context(results_dir, manip_dir)
     logger.info(
         "Reference obs loaded: n_cells=%d (%.1fs)",
         dataset_ctx.n_cells,
@@ -287,6 +292,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             specs,
             ref_id=ref_id,
             results_dir=results_dir,
+            manip_dir=manip_dir,
             embeddings_root=embeddings_root,
             model=model,
         )
@@ -379,6 +385,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             mp_ctx = mp.get_context("spawn")
             payload = SharedEvalPayload(
                 results_dir=str(results_dir),
+                manipulations_dir=str(manip_dir),
                 embeddings_root=str(embeddings_root),
                 model=model,
                 ref_id=ref_id,

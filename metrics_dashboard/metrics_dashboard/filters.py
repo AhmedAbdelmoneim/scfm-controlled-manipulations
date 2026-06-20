@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import streamlit as st
 
 from metrics_dashboard.catalog import discover_models
-from metrics_dashboard.config import DASHBOARD_METRIC_KEYS, DASHBOARD_METRICS, MODEL_ORDER, bundle_root
+from metrics_dashboard.config import MODEL_ORDER, bundle_root
 from metrics_dashboard.style import render_theme_sidebar
 
 
@@ -15,7 +15,6 @@ from metrics_dashboard.style import render_theme_sidebar
 class DashboardControls:
     dataset_ids: list[str]
     models: list[str]
-    metric_key: str
 
 
 def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
@@ -44,14 +43,7 @@ def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
     if not models:
         return None
 
-    metric_key = st.sidebar.selectbox(
-        "Metric",
-        DASHBOARD_METRIC_KEYS,
-        format_func=lambda k: DASHBOARD_METRICS[k].label,
-    )
-
     return DashboardControls(
         dataset_ids=selected_datasets,
         models=models,
-        metric_key=metric_key,
     )

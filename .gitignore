@@ -197,11 +197,13 @@ cython_debug/
 
 # custom configs (track templates; per-run generated configs stay local)
 configs/experiments/*
+configs/generated/*
 
 # batch run logs
 run_logs/
 
 # local-only scripts (batch helpers are tracked below)
 scripts/*
+!scripts/run_generated_evaluations.sh
 
 results/*

@@ -1,0 +1,9 @@
+{
+  "dataset_id": "sceval__immune_all_human",
+  "n_cells": 33506,
+  "n_genes": 12303,
+  "n_cell_types": 16,
+  "n_batches": 10,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

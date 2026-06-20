@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from scfm_controlled_manipulations.io import embedding_path, manipulation_path
+from scfm_controlled_manipulations.io import embedding_path, manipulation_path, manipulations_dir
 from scfm_controlled_manipulations.sweep_config import expand_intervention_specs
 
 
@@ -32,6 +32,19 @@ class PathLayoutTest(unittest.TestCase):
         self.assertEqual(
             man,
             Path("/data/results/manipulations/gene_shuffle_d9d8843bc9e3.h5ad"),
+        )
+        self.assertEqual(
+            manipulations_dir("/data/results", "/data/manipulations"),
+            Path("/data/manipulations"),
+        )
+        custom_man = manipulation_path(
+            "/data/results",
+            "gene_shuffle_d9d8843bc9e3",
+            "/data/manipulations",
+        )
+        self.assertEqual(
+            custom_man,
+            Path("/data/manipulations/gene_shuffle_d9d8843bc9e3.h5ad"),
         )
 
 

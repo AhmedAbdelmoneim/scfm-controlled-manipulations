@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 
+from metrics_dashboard.config import MODEL_COLORS, MODEL_ORDER
+from metrics_dashboard.transforms import (
+    average_metrics_across_datasets,
+    prepare_set1_main_metrics,
+    prepare_set2_rnx_curves,
+    std_bounds,
+)
 import numpy as np
 import pandas as pd
 
-from metrics_dashboard.config import DASHBOARD_METRICS, MODEL_COLORS, MODEL_ORDER, DashboardMetric
-from metrics_dashboard.transforms import (
-    average_metrics_across_datasets,
-    prepare_set1_grid,
-    prepare_set2_correlation,
-    std_bounds,
-)
 from scfm_controlled_manipulations.evaluation.metrics_common import (
     distribution_summary,
     make_metric_row,
@@ -57,6 +58,22 @@ class TransformTest(unittest.TestCase):
         rows = []
         for model in ("pca", "scgpt"):
             for frac in (0.5, 0.9):
+                for metric in ("viscore_local_sp", "viscore_global_sp", "distcorr"):
+                    rows.append(
+                        {
+                            "dataset_id": "ds1",
+                            "model": model,
+                            "intervention_id": f"down_{frac}",
+                            "intervention_name": "downsample",
+                            "metric_category": "structure_metrics",
+                            "metric_name": metric,
+                            "space": "embedding",
+                            "value_mean": frac,
+                            "value_std": 0.05,
+                            "param_value": frac,
+                            "param_key": "fraction",
+                        }
+                    )
                 rows.append(
                     {
                         "dataset_id": "ds1",
@@ -64,29 +81,29 @@ class TransformTest(unittest.TestCase):
                         "intervention_id": f"down_{frac}",
                         "intervention_name": "downsample",
                         "metric_category": "structure_metrics",
-                        "metric_name": "viscore_local_sp",
+                        "metric_name": "rnx_curve",
                         "space": "embedding",
-                        "value_mean": frac,
-                        "value_std": 0.05,
+                        "value_mean": np.nan,
+                        "value_std": np.nan,
                         "param_value": frac,
                         "param_key": "fraction",
+                        "rnx_curve_json": json.dumps({"k": [1, 2], "rnx": [0.2, 0.4]}),
                     }
                 )
-        for model in ("pca", "scgpt"):
-            for frac in (0.5, 0.9):
                 rows.append(
                     {
                         "dataset_id": "ds1",
                         "model": model,
                         "intervention_id": f"down_{frac}",
                         "intervention_name": "downsample",
-                        "metric_category": "bio_conservation_metrics",
-                        "metric_name": "silhouette_label",
-                        "space": "embedding_manipulated",
-                        "value_mean": 0.8,
+                        "metric_category": "clustering_metrics",
+                        "metric_name": "leiden_ari",
+                        "space": "embedding",
+                        "value_mean": 0.75,
                         "value_std": 0.02,
                         "param_value": frac,
                         "param_key": "fraction",
+                        "resolution": 1.0,
                     }
                 )
         return pd.DataFrame(rows)
@@ -101,111 +118,25 @@ class TransformTest(unittest.TestCase):
         self.assertEqual(avg["dataset_id"].iloc[0], "averaged")
         self.assertEqual(len(avg), len(df))
 
-    def test_prepare_set1_grid(self) -> None:
+    def test_prepare_set1_main_metrics(self) -> None:
         df = self._toy_metrics()
-        spec = DASHBOARD_METRICS["viscore_local_sp"]
-        layout = prepare_set1_grid(df, spec, ["pca", "scgpt"])
-        self.assertIn("downsample", layout.row_labels)
+        layout = prepare_set1_main_metrics(df, ["pca", "scgpt"])
+        self.assertIn("downsample", layout.manipulations)
+        self.assertIn("ViScore local SP", layout.metric_labels)
+        self.assertIn("Leiden ARI", layout.metric_labels)
         self.assertFalse(layout.data.empty)
         self.assertEqual(layout.x_col, "param_value")
-        self.assertEqual(layout.col_labels_by_row.get("downsample"), ["all"])
+        self.assertEqual(layout.y_ranges["Leiden ARI"], (-1.0, 1.0))
+        self.assertEqual(layout.y_ranges["Distance correlation"], (0.0, 1.0))
 
-    def test_prepare_set1_grid_viscore_layout(self) -> None:
-        """ViScore local SP: x-axis = sweep param, single column facet."""
-        rows_data = []
-        for frac in (0.2, 0.8):
-            rows_data.append(
-                {
-                    "dataset_id": "ds1",
-                    "model": "pca",
-                    "intervention_id": "down_a",
-                    "intervention_name": "downsample",
-                    "metric_category": "structure_metrics",
-                    "metric_name": "viscore_local_sp",
-                    "space": "embedding",
-                    "value_mean": frac,
-                    "value_std": 0.01,
-                    "param_value": str(frac),
-                    "param_key": "fraction",
-                }
-            )
-        df = pd.DataFrame(rows_data)
-        spec = DASHBOARD_METRICS["viscore_local_sp"]
-        layout = prepare_set1_grid(df, spec, ["pca"])
-        self.assertEqual(layout.x_col, "param_value")
-        self.assertEqual(layout.col_labels_by_row["downsample"], ["all"])
-
-    def test_prepare_set1_grid_distcorr_layout(self) -> None:
-        """DistCorr: x-axis = sweep param, single column facet."""
-        rows_data = []
-        for frac in (0.2, 0.5, 0.8):
-            rows_data.append(
-                {
-                    "dataset_id": "ds1",
-                    "model": "pca",
-                    "intervention_id": "down_a",
-                    "intervention_name": "downsample",
-                    "metric_category": "structure_metrics",
-                    "metric_name": "distcorr",
-                    "space": "embedding",
-                    "value_mean": frac,
-                    "value_std": 0.01,
-                    "param_value": str(frac),
-                    "param_key": "fraction",
-                }
-            )
-        df = pd.DataFrame(rows_data)
-        spec = DASHBOARD_METRICS["distcorr"]
-        layout = prepare_set1_grid(df, spec, ["pca"])
-        self.assertEqual(layout.x_col, "param_value")
-        self.assertEqual(layout.col_labels_by_row["downsample"], ["all"])
-        self.assertIn("downsample", layout.row_labels)
-
-    def test_prepare_set2_correlation(self) -> None:
+    def test_prepare_set2_rnx_curves(self) -> None:
         df = self._toy_metrics()
-        spec = DASHBOARD_METRICS["viscore_local_sp"]
-        wide = prepare_set2_correlation(df, spec, ["pca"])
-        self.assertIn("metric_score", wide.columns)
-        self.assertIn("silhouette_score", wide.columns)
-
-    def test_prepare_set2_correlation_reference_scib(self) -> None:
-        rows = []
-        for model in ("pca", "scgpt"):
-            for frac in (0.5, 0.9):
-                rows.append(
-                    {
-                        "dataset_id": "ds1",
-                        "model": model,
-                        "intervention_id": f"down_{frac}",
-                        "intervention_name": "downsample",
-                        "metric_category": "structure_metrics",
-                        "metric_name": "viscore_local_sp",
-                        "space": "embedding",
-                        "value_mean": frac,
-                        "value_std": 0.05,
-                        "param_value": frac,
-                        "param_key": "fraction",
-                    }
-                )
-        for model in ("pca", "scgpt"):
-            rows.append(
-                {
-                    "dataset_id": "ds1",
-                    "model": model,
-                    "intervention_id": "reference",
-                    "intervention_name": "reference",
-                    "metric_category": "bio_conservation_metrics",
-                    "metric_name": "silhouette_label",
-                    "space": "embedding_reference",
-                    "value_mean": 0.8,
-                    "value_std": 0.02,
-                }
-            )
-        df = pd.DataFrame(rows)
-        spec = DASHBOARD_METRICS["viscore_local_sp"]
-        wide = prepare_set2_correlation(df, spec, ["pca", "scgpt"])
-        self.assertIn("silhouette_score", wide.columns)
-        self.assertTrue(wide["silhouette_score"].notna().all())
+        layout = prepare_set2_rnx_curves(df, ["pca"])
+        self.assertIn("downsample", layout.manipulations)
+        self.assertFalse(layout.data.empty)
+        self.assertIn("k", layout.data.columns)
+        self.assertIn("rnx", layout.data.columns)
+        self.assertEqual(sorted(layout.data["k"].unique().tolist()), [1, 2])
 
     def test_model_colors_cover_registry(self) -> None:
         for m in MODEL_ORDER:

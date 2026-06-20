@@ -1,0 +1,24 @@
+{
+  "dataset_id": "atlases__retina",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/atlases__retina",
+  "exported_at": "2026-06-20T20:16:18.874045+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scconcept",
+    "scfoundation",
+    "scgpt",
+    "scimilarity"
+  ],
+  "n_rows": 4464,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781900713017820408,
+    "pca_metrics.csv": 1781900534959380260,
+    "scconcept_metrics.csv": 1781901525695956036,
+    "scfoundation_metrics.csv": 1781901363196730117,
+    "scgpt_metrics.csv": 1781900641919846069,
+    "scimilarity_metrics.csv": 1781901419101495904
+  }
+}

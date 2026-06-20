@@ -1,0 +1,9 @@
+{
+  "dataset_id": "atlases__tabula_sapiens",
+  "n_cells": 5000,
+  "n_genes": 20017,
+  "n_cell_types": 144,
+  "n_batches": 426,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

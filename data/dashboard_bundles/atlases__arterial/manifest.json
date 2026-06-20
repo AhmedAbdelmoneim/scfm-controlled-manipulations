@@ -1,0 +1,24 @@
+{
+  "dataset_id": "atlases__arterial",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/atlases__arterial",
+  "exported_at": "2026-06-20T20:16:03.779677+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scconcept",
+    "scfoundation",
+    "scgpt",
+    "scimilarity"
+  ],
+  "n_rows": 4464,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781884011809649499,
+    "pca_metrics.csv": 1781883833652232980,
+    "scconcept_metrics.csv": 1781884819664609609,
+    "scfoundation_metrics.csv": 1781884656865399023,
+    "scgpt_metrics.csv": 1781883940777686028,
+    "scimilarity_metrics.csv": 1781884712816158101
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "dataset_id": "sceval__pancrm",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/sceval__pancrm",
+  "exported_at": "2026-06-20T20:16:35.342165+00:00",
+  "models": [
+    "pca"
+  ],
+  "n_rows": 744,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "pca_metrics.csv": 1781912699138768132
+  }
+}

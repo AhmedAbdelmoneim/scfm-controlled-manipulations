@@ -1,0 +1,9 @@
+{
+  "dataset_id": "atlases__lung",
+  "n_cells": 5000,
+  "n_genes": 19370,
+  "n_cell_types": 50,
+  "n_batches": 659,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}
