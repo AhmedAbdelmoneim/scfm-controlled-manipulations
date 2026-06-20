@@ -90,7 +90,7 @@ try:
         else:
             st.caption(
                 f"Set 1: **{len(layout1.metric_labels)}** metric rows × "
-                f"**{len(layout1.manipulations)}** manipulation rows · "
+                f"**{len(layout1.manipulations)}** manipulation columns · "
                 "x-axis = manipulation parameter; y-axis ranges are fixed by metric."
             )
             fig1 = plot_set1_main_metrics_plotly(layout1, controls.models, scale=DEFAULT_PLOT_SCALE)

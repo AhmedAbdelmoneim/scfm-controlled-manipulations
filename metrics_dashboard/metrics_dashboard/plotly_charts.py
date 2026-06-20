@@ -154,65 +154,73 @@ def plot_set1_main_metrics_plotly(
     *,
     scale: float = 1.0,
 ) -> go.Figure:
-    rows = [
-        (metric_label, intervention)
-        for metric_label in layout.metric_labels
-        for intervention in layout.manipulations
-        if not layout.data[
-            (layout.data["metric_label"] == metric_label)
-            & (layout.data["intervention_name"] == intervention)
-        ].empty
-    ]
-    nrows = max(1, len(rows))
-    ncols = 1
+    metric_labels = layout.metric_labels
+    manipulations = layout.manipulations
+    nrows = max(1, len(metric_labels))
+    ncols = max(1, len(manipulations))
     sub = layout.data
     x_col = layout.x_col
     row_gap = min(0.06 + 0.025 * scale, 0.14)
     if nrows > 1:
         row_gap = min(row_gap, 0.9 / (nrows - 1))
+    col_gap = min(0.04 + 0.015 * scale, 0.09)
+    if ncols > 1:
+        col_gap = min(col_gap, 0.9 / (ncols - 1))
     fig = make_subplots(
         rows=nrows,
         cols=ncols,
-        subplot_titles=[f"{metric_label} — {intervention}" for metric_label, intervention in rows],
+        subplot_titles=[
+            intervention if row_idx == 0 else ""
+            for row_idx in range(nrows)
+            for intervention in manipulations
+        ],
+        horizontal_spacing=col_gap,
         vertical_spacing=row_gap,
+        shared_yaxes="rows",
     )
     palette = model_palette(models)
     legend_shown = False
 
-    for ri, (metric_label, intervention) in enumerate(rows, start=1):
-        cell = sub[
-            (sub["metric_label"] == metric_label)
-            & (sub["intervention_name"] == intervention)
-        ]
-        _add_sweep_traces(
-            fig,
-            cell,
-            x_col=x_col,
-            models=models,
-            palette=palette,
-            row=ri,
-            col=1,
-            show_legend=not legend_shown,
-            intervention_name=intervention,
-        )
-        legend_shown = True
-        fig.update_yaxes(
-            title_text=metric_label,
-            range=list(layout.y_ranges.get(metric_label, (0.0, 1.0))),
-            row=ri,
-            col=1,
-        )
-        if ri == nrows:
-            fig.update_xaxes(title_text=_x_axis_title(cell, x_col), row=ri, col=1)
-        else:
-            fig.update_xaxes(showticklabels=False, row=ri, col=1)
+    for ri, metric_label in enumerate(metric_labels, start=1):
+        for ci, intervention in enumerate(manipulations, start=1):
+            cell = sub[
+                (sub["metric_label"] == metric_label)
+                & (sub["intervention_name"] == intervention)
+            ]
+            if cell.empty:
+                fig.update_xaxes(visible=False, row=ri, col=ci)
+                fig.update_yaxes(visible=False, row=ri, col=ci)
+                continue
+            _add_sweep_traces(
+                fig,
+                cell,
+                x_col=x_col,
+                models=models,
+                palette=palette,
+                row=ri,
+                col=ci,
+                show_legend=not legend_shown,
+                intervention_name=intervention,
+            )
+            legend_shown = True
+            fig.update_yaxes(
+                title_text=metric_label if ci == 1 else None,
+                range=list(layout.y_ranges.get(metric_label, (0.0, 1.0))),
+                row=ri,
+                col=ci,
+            )
+            if ri == nrows:
+                fig.update_xaxes(title_text=_x_axis_title(cell, x_col), row=ri, col=ci)
+            else:
+                fig.update_xaxes(showticklabels=False, row=ri, col=ci)
 
     cell_h = min(240 * scale, 380)
+    cell_w = min(260 * scale, 420)
     fig.update_layout(
         template=_plotly_template(),
         title=dict(text="Set 1 — Main metrics", x=0.5, y=0.995),
         height=min(cell_h * nrows + 120, 5200),
-        width=min(1100 * scale, 1800),
+        width=min(cell_w * ncols + 140, 3600),
         legend=dict(orientation="h", yanchor="top", y=-0.06, x=0.5, xanchor="center"),
         margin=dict(t=70, b=90, l=50, r=30),
     )
