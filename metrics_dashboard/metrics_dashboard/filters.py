@@ -24,19 +24,16 @@ def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
         st.sidebar.error("No bundles in data/dashboard_bundles. Run make export-dashboard-bundle.")
         return None
 
-    selected_datasets = st.sidebar.multiselect(
-        "Dataset(s)",
+    selected_dataset = st.sidebar.selectbox(
+        "Dataset",
         datasets,
-        default=datasets[:1],
-        help="Select one or more datasets (metrics are averaged when multiple).",
+        help="Select one dataset to view.",
     )
-    if not selected_datasets:
+    if not selected_dataset:
         return None
 
     root = bundle_root()
-    all_models: list[str] = []
-    for ds in selected_datasets:
-        all_models.extend(discover_models(ds, root))
+    all_models = discover_models(selected_dataset, root)
     all_models = sorted(set(all_models), key=lambda m: MODEL_ORDER.index(m) if m in MODEL_ORDER else 99)
 
     models = st.sidebar.multiselect("Models", all_models, default=all_models)
@@ -44,6 +41,6 @@ def render_sidebar_controls(datasets: list[str]) -> DashboardControls | None:
         return None
 
     return DashboardControls(
-        dataset_ids=selected_datasets,
+        dataset_ids=[selected_dataset],
         models=models,
     )
