@@ -1,4 +1,4 @@
-"""Metrics plots — manipulation sweeps, correlations, collapse/shift."""
+"""Metrics plots: main sweeps, R_NX curves, and embedding shift/collapse."""
 
 from __future__ import annotations
 
@@ -11,26 +11,20 @@ import traceback
 import streamlit as st
 
 from metrics_dashboard.catalog import discover_datasets
-from metrics_dashboard.config import (
-    DASHBOARD_METRICS,
-    DEFAULT_PLOT_SCALE,
-    MANIPULATION_ORDER,
-    PLOT_SET_DESCRIPTIONS,
-    bundle_root,
-)
+from metrics_dashboard.config import DEFAULT_PLOT_SCALE, MANIPULATION_ORDER, PLOT_SET_DESCRIPTIONS, bundle_root
 from metrics_dashboard.filters import render_sidebar_controls
 from metrics_dashboard.load import load_multi_dataset_metrics
 from metrics_dashboard.plot_display import show_figure
 from metrics_dashboard.plotly_charts import (
-    plot_set1_grid_plotly,
-    plot_set2_correlation_plotly,
+    plot_set1_main_metrics_plotly,
+    plot_set2_rnx_curves_plotly,
     plot_set3_row_plotly,
 )
 from metrics_dashboard.runtime import log_startup_context
 from metrics_dashboard.transforms import (
     average_metrics_across_datasets,
-    prepare_set1_grid,
-    prepare_set2_correlation,
+    prepare_set1_main_metrics,
+    prepare_set2_rnx_curves,
     prepare_set3_embedding,
 )
 
@@ -70,72 +64,55 @@ try:
             f"models: {', '.join(controls.models)}"
         )
 
-    spec = DASHBOARD_METRICS[controls.metric_key]
-    st.header(spec.label)
-    st.markdown(spec.description)
+    st.header("Structure metrics")
+    st.markdown(
+        "Dashboard views focus on structure preservation and embedding shift/collapse. "
+        "scIB bio/batch metrics are intentionally excluded from this dashboard."
+    )
 
     with st.expander("How to read these plots", expanded=False):
         st.markdown(f"**Set 1:** {PLOT_SET_DESCRIPTIONS['set1']}")
         st.markdown(f"**Set 2:** {PLOT_SET_DESCRIPTIONS['set2']}")
         st.markdown(f"**Set 3:** {PLOT_SET_DESCRIPTIONS['set3']}")
 
-    st.subheader("Set 1 — Manipulation sweeps")
+    st.subheader("Set 1 — Main metrics")
     with st.spinner("Building Set 1 plot…"):
         t0 = time.perf_counter()
-        layout1 = prepare_set1_grid(metrics_df, spec, controls.models)
-        ncol = max((len(c) for c in layout1.col_labels_by_row.values()), default=1)
+        layout1 = prepare_set1_main_metrics(metrics_df, controls.models)
         log.info(
-            "set1 grid %d x %d (max cols) prepared in %.2fs",
-            len(layout1.row_labels),
-            ncol,
+            "set1 main metrics %d metrics x %d manipulations prepared in %.2fs",
+            len(layout1.metric_labels),
+            len(layout1.manipulations),
             time.perf_counter() - t0,
         )
         if layout1.data.empty:
-            st.info("No rows for this metric.")
+            st.info("No rows for the main metrics.")
         else:
-            k_note = ""
-            if "k" in layout1.data.columns and layout1.data["k"].notna().any():
-                k_vals = sorted(layout1.data["k"].dropna().unique())
-                if len(k_vals) == 1:
-                    k_note = f" · k = {int(k_vals[0]) if k_vals[0] == int(k_vals[0]) else k_vals[0]}"
             st.caption(
-                f"Set 1: **{len(layout1.row_labels)}** manipulations × config columns "
-                f"(up to **{ncol}** per row) · x-axis = **{layout1.x_col}**{k_note}."
+                f"Set 1: **{len(layout1.metric_labels)}** metric rows × "
+                f"**{len(layout1.manipulations)}** manipulation rows · "
+                "x-axis = manipulation parameter; y-axis ranges are fixed by metric."
             )
-            fig1 = plot_set1_grid_plotly(
-                layout1, spec, controls.models, scale=DEFAULT_PLOT_SCALE
-            )
+            fig1 = plot_set1_main_metrics_plotly(layout1, controls.models, scale=DEFAULT_PLOT_SCALE)
             log.info("set1 figure built in %.2fs", time.perf_counter() - t0)
             show_figure(fig1)
 
-    st.subheader("Set 2 — Integration vs metric score")
+    st.subheader("Set 2 — R_NX curves")
     with st.spinner("Building Set 2 plot…"):
         t0 = time.perf_counter()
-        wide = prepare_set2_correlation(metrics_df, spec, controls.models)
-        if wide.empty or "metric_score" not in wide.columns:
-            st.info("Insufficient data for correlation plots.")
+        rnx_layout = prepare_set2_rnx_curves(metrics_df, controls.models)
+        if rnx_layout.data.empty:
+            st.info("No R_NX curve rows for the selected datasets and models.")
         else:
-            scib_cols = [
-                col
-                for col in ("silhouette_score", "graph_connectivity_score", "ilisi_score")
-                if col in wide.columns and wide[col].notna().any()
-            ]
-            if not scib_cols:
-                st.warning(
-                    "scIB bio/batch scores are missing from this bundle (requires "
-                    "`cell_type_col` and `batch_col` in reference `obs` and "
-                    "`make evaluate-scib`). Re-export the dashboard bundle after running it."
-                )
-            fig2 = plot_set2_correlation_plotly(
-                wide,
-                x_label=spec.label,
-                models=controls.models,
-                scale=DEFAULT_PLOT_SCALE,
+            st.caption(
+                f"Set 2: **{len(rnx_layout.manipulations)}** manipulation rows; "
+                "columns are manipulation parameter values; y-axis defaults to R_NX score range."
             )
+            fig2 = plot_set2_rnx_curves_plotly(rnx_layout, controls.models, scale=DEFAULT_PLOT_SCALE)
             log.info("set2 figure built in %.2fs", time.perf_counter() - t0)
             show_figure(fig2)
 
-    st.subheader("Set 3 — Embedding collapse and shift")
+    st.subheader("Set 3 — Embedding shift and collapse")
     with st.spinner("Building Set 3 plot…"):
         t0 = time.perf_counter()
         collapse_df, shift_df = prepare_set3_embedding(metrics_df, controls.models)

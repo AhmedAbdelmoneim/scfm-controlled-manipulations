@@ -1,0 +1,18 @@
+{
+  "dataset_id": "sceval__dendritic_cells",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/sceval__dendritic_cells",
+  "exported_at": "2026-06-20T20:16:26.351301+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scgpt"
+  ],
+  "n_rows": 2232,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781902600867623874,
+    "pca_metrics.csv": 1781902540546798661,
+    "scgpt_metrics.csv": 1781902571450221433
+  }
+}

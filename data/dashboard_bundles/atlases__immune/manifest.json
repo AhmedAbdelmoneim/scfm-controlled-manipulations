@@ -1,0 +1,24 @@
+{
+  "dataset_id": "atlases__immune",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/atlases__immune",
+  "exported_at": "2026-06-20T20:16:11.178861+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scconcept",
+    "scfoundation",
+    "scgpt",
+    "scimilarity"
+  ],
+  "n_rows": 4464,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781885480289584008,
+    "pca_metrics.csv": 1781885301668157489,
+    "scconcept_metrics.csv": 1781886287571615468,
+    "scfoundation_metrics.csv": 1781886126536408688,
+    "scgpt_metrics.csv": 1781885408898614170,
+    "scimilarity_metrics.csv": 1781886181961168213
+  }
+}

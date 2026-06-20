@@ -1,0 +1,9 @@
+{
+  "dataset_id": "atlases__arterial",
+  "n_cells": 5000,
+  "n_genes": 19699,
+  "n_cell_types": 7,
+  "n_batches": 6,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

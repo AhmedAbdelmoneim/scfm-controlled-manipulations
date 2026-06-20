@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
 import numpy as np
 import pandas as pd
 
 from metrics_dashboard.config import (
-    DASHBOARD_METRICS,
     DashboardMetric,
+    MAIN_METRICS,
     MANIPULATION_ORDER,
     MODEL_ORDER,
     REFERENCE_INTERVENTION_NAMES,
@@ -18,6 +19,7 @@ from metrics_dashboard.config import (
     SET3_SHIFT_METRIC,
     SET3_SPACE,
 )
+from metrics_dashboard.sweep_axis import ordered_param_values
 
 
 def std_bounds(row: pd.Series) -> tuple[float, float]:
@@ -136,121 +138,138 @@ def _set1_x_col(spec: DashboardMetric, sub: pd.DataFrame) -> str:
 
 
 @dataclass(frozen=True)
-class Set1GridLayout:
+class Set1MainLayout:
     data: pd.DataFrame
-    row_labels: list[str]
-    col_labels_by_row: dict[str, list[str]]
+    metric_labels: list[str]
+    manipulations: list[str]
     x_col: str
-    column_facet: str = "param_value"
+    y_ranges: dict[str, tuple[float, float]]
 
 
-def prepare_set1_grid(
-    metrics_df: pd.DataFrame,
-    spec: DashboardMetric,
-    models: list[str],
-) -> Set1GridLayout:
-    """Build Set 1 layout: rows = manipulation, columns = config, x = sweep hyperparameter."""
-    sub = filter_for_dashboard_metric(metrics_df, spec, models, pin_hyperparameters=False)
-    sub = sub[~sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
-    interventions = [i for i in MANIPULATION_ORDER if i in sub["intervention_name"].unique()]
-    extras = sorted(set(sub["intervention_name"].unique()) - set(interventions))
-    row_labels = interventions + extras
+def _pin_default_resolution(sub: pd.DataFrame, spec: DashboardMetric) -> pd.DataFrame:
+    if sub.empty or spec.default_resolution is None or "resolution" not in sub.columns:
+        return sub
+    res_vals = sub["resolution"].dropna().unique()
+    if not len(res_vals):
+        return sub
+    target = spec.default_resolution
+    if target not in res_vals:
+        target = float(sorted(res_vals)[0])
+    return sub[sub["resolution"] == target]
 
-    x_col = _set1_x_col(spec, sub)
-    column_facet = "param_value"
-    col_labels_by_row: dict[str, list[str]] = {}
 
-    if x_col == column_facet:
-        # e.g. kNN recall: sweep param_value on x-axis, no per-config columns
-        col_labels_by_row = {name: ["all"] for name in row_labels}
+def _main_metric_rows(metrics_df: pd.DataFrame, spec: DashboardMetric, models: list[str]) -> pd.DataFrame:
+    sub = filter_for_dashboard_metric(metrics_df, spec, models, pin_hyperparameters=True)
+    sub = _pin_default_resolution(sub, spec)
+    sub = sub[~sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)].copy()
+    if sub.empty:
+        return sub
+    sub["metric_key"] = spec.key
+    sub["metric_label"] = spec.label
+    if spec.key == "clustering_ari":
+        sub["metric_y_min"] = -1.0
+        sub["metric_y_max"] = 1.0
     else:
-        for name in row_labels:
-            part = sub[sub["intervention_name"] == name]
-            col_labels_by_row[name] = _sort_numeric_str_labels(part[column_facet].unique())
-
-    return Set1GridLayout(
-        data=sub,
-        row_labels=row_labels,
-        col_labels_by_row=col_labels_by_row,
-        x_col=x_col,
-        column_facet=column_facet,
-    )
+        sub["metric_y_min"] = 0.0
+        sub["metric_y_max"] = 1.0
+    return sub
 
 
-SET2_SCIB_METRICS: tuple[tuple[str, str, str], ...] = (
-    ("silhouette_label", "silhouette_score", "Silhouette label"),
-    ("graph_connectivity", "graph_connectivity_score", "Graph connectivity"),
-    ("ilisi_knn", "ilisi_score", "iLISI"),
-    ("clisi_knn", "clisi_score", "cLISI"),
-)
+def prepare_set1_main_metrics(metrics_df: pd.DataFrame, models: list[str]) -> Set1MainLayout:
+    """Build Set 1: fixed main metrics by manipulation strength and model."""
+    frames = [
+        _main_metric_rows(metrics_df, spec, models)
+        for spec in MAIN_METRICS
+    ]
+    frames = [frame for frame in frames if not frame.empty]
+    data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if data.empty:
+        return Set1MainLayout(data, [], [], "param_value", {})
 
-
-def prepare_set2_correlation(
-    metrics_df: pd.DataFrame,
-    spec: DashboardMetric,
-    models: list[str],
-) -> pd.DataFrame:
-    """Wide table: primary scIB scores + selected metric mean per run."""
-    metric_sub = filter_for_dashboard_metric(metrics_df, spec, models)
-    metric_sub = metric_sub[~metric_sub["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES)]
-    if spec.x_col == "resolution":
-        # one point per resolution — pick default or mean across resolutions
-        if spec.default_resolution is not None and "resolution" in metric_sub.columns:
-            metric_sub = metric_sub[metric_sub["resolution"] == spec.default_resolution]
-        else:
-            metric_sub = (
-                metric_sub.groupby(
-                    ["model", "intervention_id", "intervention_name", "param_value"],
-                    observed=True,
-                )["value_mean"]
-                .mean()
-                .reset_index()
-            )
-
-    keys = ["model", "intervention_id", "intervention_name", "param_value"]
-    if "param_key" in metric_sub.columns:
-        keys.append("param_key")
-    metric_wide = metric_sub.groupby(keys, observed=True)["value_mean"].mean().reset_index()
-    metric_wide = metric_wide.rename(columns={"value_mean": "metric_score"})
-
-    scib = metrics_df[
-        metrics_df["metric_category"].isin(
-            ("bio_conservation_metrics", "batch_correction_metrics")
+    metric_labels = [
+        spec.label
+        for spec in MAIN_METRICS
+        if spec.label in set(data["metric_label"].dropna().astype(str))
+    ]
+    interventions = [
+        i for i in MANIPULATION_ORDER if i in set(data["intervention_name"].dropna().astype(str))
+    ]
+    extras = sorted(set(data["intervention_name"].dropna().astype(str)) - set(interventions))
+    y_ranges = {
+        label: (
+            float(part["metric_y_min"].iloc[0]),
+            float(part["metric_y_max"].iloc[0]),
         )
+        for label, part in data.groupby("metric_label", observed=True)
+    }
+    return Set1MainLayout(data, metric_labels, interventions + extras, "param_value", y_ranges)
+
+
+@dataclass(frozen=True)
+class Set2RnxLayout:
+    data: pd.DataFrame
+    manipulations: list[str]
+    param_values_by_row: dict[str, list[str]]
+    y_range: tuple[float, float] = (-1.0, 1.0)
+
+
+def prepare_set2_rnx_curves(metrics_df: pd.DataFrame, models: list[str]) -> Set2RnxLayout:
+    """Parse stored R_NX curve JSON into long rows for curve-grid plotting."""
+    required = {"metric_name", "rnx_curve_json", "model", "intervention_name", "param_value"}
+    if metrics_df.empty or not required.issubset(metrics_df.columns):
+        return Set2RnxLayout(pd.DataFrame(), [], {})
+    sub = metrics_df[
+        (metrics_df["metric_category"] == "structure_metrics")
+        & (metrics_df["metric_name"] == "rnx_curve")
+        & (metrics_df["space"] == "embedding")
         & (metrics_df["model"].astype(str).isin(models))
+        & (~metrics_df["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES))
+    ].copy()
+    rows: list[dict] = []
+    for _, row in sub.iterrows():
+        payload_text = row.get("rnx_curve_json")
+        if pd.isna(payload_text):
+            continue
+        try:
+            payload = json.loads(str(payload_text))
+        except json.JSONDecodeError:
+            continue
+        k_values = payload.get("k", [])
+        rnx_values = payload.get("rnx", [])
+        for k, rnx in zip(k_values, rnx_values, strict=False):
+            rows.append(
+                {
+                    "dataset_id": row.get("dataset_id"),
+                    "model": row.get("model"),
+                    "intervention_id": row.get("intervention_id"),
+                    "intervention_name": row.get("intervention_name"),
+                    "param_key": row.get("param_key"),
+                    "param_value": row.get("param_value"),
+                    "k": int(k),
+                    "rnx": float(rnx),
+                }
+            )
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return Set2RnxLayout(data, [], {})
+    group_cols = ["model", "intervention_name", "param_key", "param_value", "k"]
+    data = (
+        data.groupby(group_cols, dropna=False, observed=True)["rnx"]
+        .mean()
+        .reset_index()
+    )
+    interventions = [
+        i for i in MANIPULATION_ORDER if i in set(data["intervention_name"].dropna().astype(str))
     ]
-    scib_ref = scib[
-        (scib["space"] == "embedding_reference")
-        & (scib["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES))
-    ]
-    if not scib_ref.empty:
-        scib = scib_ref
-        scib_keys = ["model"]
-    else:
-        # Legacy rows from main evaluate (per-manipulation embedding_manipulated).
-        scib = scib[
-            (scib["space"] == "embedding_manipulated")
-            & (~scib["intervention_name"].isin(REFERENCE_INTERVENTION_NAMES))
-        ]
-        scib_keys = keys
-
-    def _pivot_score(metric_name: str, col: str) -> pd.DataFrame:
-        part = scib[scib["metric_name"] == metric_name]
-        if part.empty:
-            return pd.DataFrame(columns=scib_keys + [col])
-        return (
-            part.groupby(scib_keys, observed=True)["value_mean"]
-            .mean()
-            .reset_index()
-            .rename(columns={"value_mean": col})
+    extras = sorted(set(data["intervention_name"].dropna().astype(str)) - set(interventions))
+    param_values_by_row = {
+        intervention: ordered_param_values(
+            data[data["intervention_name"] == intervention]["param_value"],
+            intervention_name=intervention,
         )
-
-    wide = metric_wide
-    for metric_name, col, _title in SET2_SCIB_METRICS:
-        extra = _pivot_score(metric_name, col)
-        if not extra.empty:
-            wide = wide.merge(extra, on=scib_keys, how="left")
-    return wide
+        for intervention in interventions + extras
+    }
+    return Set2RnxLayout(data, interventions + extras, param_values_by_row)
 
 
 def _reference_baseline_per_model(ref_within: pd.DataFrame) -> pd.DataFrame:

@@ -1,0 +1,9 @@
+{
+  "dataset_id": "atlases__immune",
+  "n_cells": 5000,
+  "n_genes": 19666,
+  "n_cell_types": 37,
+  "n_batches": 36,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

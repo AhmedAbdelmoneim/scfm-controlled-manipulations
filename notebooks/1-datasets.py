@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.5"
 app = marimo.App()
 
 
@@ -17,6 +17,8 @@ def _():
     from pathlib import Path
     import re
 
+    import marimo as mo
+    import mygene
     import numpy as np
     import pandas as pd
     import scanpy as sc
@@ -24,7 +26,8 @@ def _():
 
     DATA_DIR = Path("/vault/amoneim/scfm-controlled-manipulations/raw_datasets")
     OUTPUT_DIR = Path("/vault/amoneim/scfm-controlled-manipulations/raw_datasets_normalized")
-    return DATA_DIR, OUTPUT_DIR, np, pd, re, sc, sp
+    ENSEMBL_MAPPING_CACHE = OUTPUT_DIR / "gene_symbol_to_human_ensembl.csv"
+    return DATA_DIR, ENSEMBL_MAPPING_CACHE, OUTPUT_DIR, mo, mygene, np, pd, re, sc, sp
 
 
 @app.cell(hide_code=True)
@@ -36,20 +39,40 @@ def _(mo):
 
 
 @app.cell
-def _(DATA_DIR, sc):
-    def load_h5ads(dataset_dir):
+def _(DATA_DIR, pd, sc):
+    def load_h5ads(dataset_dir, recursive=False):
+        paths = dataset_dir.rglob("*.h5ad") if recursive else dataset_dir.glob("*.h5ad")
         return {
-            path.stem: sc.read_h5ad(path, backed="r")
-            for path in sorted(dataset_dir.glob("*.h5ad"))
+            path.relative_to(dataset_dir).with_suffix("").as_posix().replace("/", "__"): sc.read_h5ad(path, backed="r")
+            for path in sorted(paths)
+            if "_downloads" not in path.parts
         }
 
     ATLASES = load_h5ads(DATA_DIR / "atlases")
     SCEVAL = load_h5ads(DATA_DIR / "sceval")
-    return ATLASES, SCEVAL
+    SCFM_EVAL = load_h5ads(DATA_DIR / "scfm_eval", recursive=True)
+
+    manifest_path = DATA_DIR / "scfm_eval" / "manifest.csv"
+    if manifest_path.is_file():
+        scfm_eval_manifest = pd.read_csv(manifest_path)
+        scfm_eval_manifest = scfm_eval_manifest[
+            scfm_eval_manifest["status"].isin(["downloaded", "converted"])
+        ].copy()
+        scfm_eval_manifest["dataset_name"] = (
+            scfm_eval_manifest["source"].astype(str)
+            + "__"
+            + scfm_eval_manifest["output_path"].map(
+                lambda value: str(value).rsplit("/", 1)[-1].removesuffix(".h5ad")
+            )
+        )
+        SCFM_EVAL_METADATA = scfm_eval_manifest.set_index("dataset_name").to_dict("index")
+    else:
+        SCFM_EVAL_METADATA = {}
+    return ATLASES, SCEVAL, SCFM_EVAL, SCFM_EVAL_METADATA
 
 
 @app.cell
-def _(ATLASES, SCEVAL, pd):
+def _(ATLASES, SCEVAL, SCFM_EVAL, pd):
 
 
     CELL_TYPE_COLUMNS = (
@@ -102,7 +125,7 @@ def _(ATLASES, SCEVAL, pd):
     dataset_summary = pd.DataFrame(
         [
             summarize_dataset(name, adata)
-            for datasets in (ATLASES, SCEVAL)
+            for datasets in (ATLASES, SCEVAL, SCFM_EVAL)
             for name, adata in datasets.items()
         ]
     )
@@ -119,7 +142,15 @@ def _(mo):
 
 
 @app.cell
-def _(ATLASES, BATCH_COLUMNS, CELL_TYPE_COLUMNS, SCEVAL, best_column, pd):
+def _(
+    ATLASES,
+    BATCH_COLUMNS,
+    CELL_TYPE_COLUMNS,
+    SCEVAL,
+    SCFM_EVAL,
+    best_column,
+    pd,
+):
     def normalize_obs_columns(dataset_group, datasets):
         rows = []
         for name, adata in datasets.items():
@@ -146,6 +177,7 @@ def _(ATLASES, BATCH_COLUMNS, CELL_TYPE_COLUMNS, SCEVAL, best_column, pd):
     normalization_summary = pd.DataFrame(
         normalize_obs_columns("atlases", ATLASES)
         + normalize_obs_columns("sceval", SCEVAL)
+        + normalize_obs_columns("scfm_eval", SCFM_EVAL)
     )
     normalization_summary
     return
@@ -160,7 +192,7 @@ def _(mo):
 
 
 @app.cell
-def _(ATLASES, SCEVAL, best_column, pd):
+def _(ATLASES, SCEVAL, SCFM_EVAL, best_column, pd):
     BIOTYPE_COLUMNS = (
         "feature_type",
         "feature_biotype",
@@ -224,6 +256,7 @@ def _(ATLASES, SCEVAL, best_column, pd):
     gene_filtering_plan = pd.DataFrame(
         summarize_gene_filtering_plan("atlases", ATLASES)
         + summarize_gene_filtering_plan("sceval", SCEVAL)
+        + summarize_gene_filtering_plan("scfm_eval", SCFM_EVAL)
     )
     gene_filtering_plan
     return TARGET_BIOTYPE, protein_coding_filter_info
@@ -242,9 +275,12 @@ def _(
     ATLASES,
     BATCH_COLUMNS,
     CELL_TYPE_COLUMNS,
+    ENSEMBL_MAPPING_CACHE,
     SCEVAL,
+    SCFM_EVAL,
     TARGET_BIOTYPE,
     best_column,
+    mygene,
     np,
     pd,
     protein_coding_filter_info,
@@ -264,6 +300,7 @@ def _(
     )
     ENSEMBL_ID_COLUMNS = (
         "ensembl_id",
+        "ensemble_id",
         "ensembl_gene_id",
         "gene_id",
         "gene_ids",
@@ -281,6 +318,16 @@ def _(
 
     def looks_like_ensembl_id(value):
         return bool(ENSEMBL_ID_PATTERN.match(str(value).strip()))
+
+    def valid_ensembl_fraction(values):
+        nonempty_values = [
+            str(value).strip()
+            for value in values
+            if str(value).strip() and str(value).strip().lower() != "nan"
+        ]
+        if not nonempty_values:
+            return 0.0
+        return sum(looks_like_ensembl_id(value) for value in nonempty_values) / len(nonempty_values)
 
     def nonempty_text(value, fallback=""):
         text = str(value).strip()
@@ -316,14 +363,16 @@ def _(
     def infer_ensembl_ids(adata):
         source_column = best_column(adata.var, ENSEMBL_ID_COLUMNS)
         if source_column:
-            return [
+            ids = [
                 nonempty_text(value, fallback=fallback)
                 for value, fallback in zip(
                     adata.var[source_column].tolist(),
                     adata.var_names.astype(str),
                     strict=False,
                 )
-            ], source_column
+            ]
+            if valid_ensembl_fraction(ids) > 0.5:
+                return ids, source_column
 
         var_names = adata.var_names.astype(str).tolist()
         ensembl_fraction = sum(looks_like_ensembl_id(value) for value in var_names) / len(var_names)
@@ -331,6 +380,69 @@ def _(
             return var_names, "var_names"
 
         return [""] * adata.n_vars, ""
+
+    def load_ensembl_mapping_cache():
+        if not ENSEMBL_MAPPING_CACHE.is_file():
+            return {}
+        cached = pd.read_csv(ENSEMBL_MAPPING_CACHE).fillna("")
+        return dict(zip(cached["symbol"].astype(str), cached["ensembl_id"].astype(str), strict=False))
+
+    def save_ensembl_mapping_cache(mapping):
+        ENSEMBL_MAPPING_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            [{"symbol": symbol, "ensembl_id": ensembl_id} for symbol, ensembl_id in sorted(mapping.items())]
+        ).to_csv(ENSEMBL_MAPPING_CACHE, index=False)
+
+    def extract_ensembl_id(query_result):
+        ensembl = query_result.get("ensembl")
+        if isinstance(ensembl, list):
+            candidates = ensembl
+        elif isinstance(ensembl, dict):
+            candidates = [ensembl]
+        else:
+            candidates = []
+        for candidate in candidates:
+            gene_id = str(candidate.get("gene", "")).strip()
+            if gene_id.startswith("ENSG"):
+                return gene_id
+        return ""
+
+    def fetch_human_ensembl_ids(symbols):
+        if not symbols:
+            return {}
+        mg = mygene.MyGeneInfo()
+        fetched = {}
+        for start in range(0, len(symbols), 1000):
+            batch = symbols[start : start + 1000]
+            results = mg.querymany(
+                batch,
+                scopes="symbol,alias",
+                fields="ensembl.gene",
+                species="human",
+                as_dataframe=False,
+                verbose=False,
+            )
+            for result in results:
+                query = str(result.get("query", "")).strip()
+                fetched[query] = extract_ensembl_id(result)
+        return fetched
+
+    def map_symbols_to_human_ensembl_ids(gene_names):
+        cache = load_ensembl_mapping_cache()
+        query_symbols = sorted({str(symbol).strip() for symbol in gene_names if str(symbol).strip()})
+        query_symbols += [
+            symbol.upper()
+            for symbol in query_symbols
+            if symbol.upper() != symbol and symbol.upper() not in cache
+        ]
+        missing = [symbol for symbol in query_symbols if symbol not in cache]
+        if missing:
+            cache.update(fetch_human_ensembl_ids(missing))
+            save_ensembl_mapping_cache(cache)
+        return [
+            cache.get(symbol, "") or cache.get(symbol.upper(), "")
+            for symbol in gene_names
+        ]
 
     def infer_count_source(adata):
         if adata.raw is not None and adata.raw.shape == adata.shape:
@@ -410,7 +522,7 @@ def _(
 
         return np.round(matrix), decision
 
-    def normalize_for_embedding(adata):
+    def normalize_for_embedding(adata, dataset_group="", dataset_name="", dataset_metadata=None):
         normalized = adata.to_memory() if hasattr(adata, "to_memory") else adata.copy()
         filter_info = protein_coding_filter_info(normalized)
         count_matrix, count_source = count_matrix_for_embedding(normalized)
@@ -420,6 +532,24 @@ def _(
         count_matrix, rounding_decision = round_count_like_matrix(count_matrix)
         gene_names, gene_name_source = infer_gene_names(normalized)
         ensembl_ids, ensembl_id_source = infer_ensembl_ids(normalized)
+        n_genes_before_ensembl_filter = normalized.n_vars
+        n_genes_after_ensembl_filter = normalized.n_vars
+        if valid_ensembl_fraction(ensembl_ids) <= 0.5:
+            ensembl_ids = map_symbols_to_human_ensembl_ids(gene_names)
+            ensembl_id_source = "mygene_human_symbol"
+            ensembl_mask = np.array([bool(value) for value in ensembl_ids])
+            if ensembl_mask.any() and not ensembl_mask.all():
+                count_matrix = count_matrix[:, ensembl_mask].copy()
+                normalized = normalized[:, ensembl_mask].copy()
+                gene_names = [
+                    gene_name for gene_name, keep in zip(gene_names, ensembl_mask, strict=False) if keep
+                ]
+                ensembl_ids = [
+                    ensembl_id
+                    for ensembl_id, keep in zip(ensembl_ids, ensembl_mask, strict=False)
+                    if keep
+                ]
+                n_genes_after_ensembl_filter = len(gene_names)
         cell_type_source = best_column(normalized.obs, CELL_TYPE_COLUMNS)
         batch_source = best_column(normalized.obs, BATCH_COLUMNS)
 
@@ -439,6 +569,32 @@ def _(
         if batch_source is not None:
             normalized.obs["batch"] = normalized.obs[batch_source]
 
+        if dataset_metadata:
+            metadata = {
+                key: value
+                for key, value in dataset_metadata.items()
+                if not (pd.isna(value) if not isinstance(value, (list, dict)) else False)
+            }
+            normalized.uns["scfm_eval_manifest"] = metadata
+            for key in (
+                "d_id",
+                "source",
+                "arm",
+                "disease",
+                "confound",
+                "provenance",
+                "resolution_method",
+                "tissue_annotation_suspect",
+                "gene_resolution_coverage",
+            ):
+                if key in metadata:
+                    normalized.obs[f"dataset_{key}"] = metadata[key]
+
+        if dataset_group:
+            normalized.obs["dataset_group"] = dataset_group
+        if dataset_name:
+            normalized.obs["dataset_name"] = dataset_name
+
         normalized.uns["embedding_input_normalization"] = {
             "count_source": count_source,
             "gene_name_source": gene_name_source,
@@ -454,13 +610,15 @@ def _(
             "gene_filter_applied": filter_info["filter_applied"],
             "n_genes_before_filter": filter_info["n_genes_before"],
             "n_genes_after_filter": filter_info["n_genes_after"],
+            "n_genes_before_ensembl_filter": n_genes_before_ensembl_filter,
+            "n_genes_after_ensembl_filter": n_genes_after_ensembl_filter,
         }
         return normalized
 
     def normalize_group_for_embedding(datasets, names=None):
         selected_names = names if names is not None else datasets.keys()
         return {
-            name: normalize_for_embedding(datasets[name])
+            name: normalize_for_embedding(datasets[name], dataset_name=name)
             for name in selected_names
         }
 
@@ -503,6 +661,7 @@ def _(
     embedding_input_normalization_plan = pd.DataFrame(
         summarize_embedding_normalization_plan("atlases", ATLASES)
         + summarize_embedding_normalization_plan("sceval", SCEVAL)
+        + summarize_embedding_normalization_plan("scfm_eval", SCFM_EVAL)
     )
     embedding_input_normalization_plan
     return (normalize_for_embedding,)
@@ -517,8 +676,16 @@ def _(mo):
 
 
 @app.cell
-def _(ATLASES, OUTPUT_DIR, SCEVAL, normalize_for_embedding, pd):
-    OVERWRITE_OUTPUTS = True
+def _(
+    ATLASES,
+    OUTPUT_DIR,
+    SCEVAL,
+    SCFM_EVAL,
+    SCFM_EVAL_METADATA,
+    normalize_for_embedding,
+    pd,
+):
+    OVERWRITE_OUTPUTS = False
 
     def save_normalized_group(dataset_group, datasets):
         output_dir = OUTPUT_DIR / dataset_group
@@ -538,7 +705,12 @@ def _(ATLASES, OUTPUT_DIR, SCEVAL, normalize_for_embedding, pd):
                 )
                 continue
 
-            normalized = normalize_for_embedding(adata)
+            normalized = normalize_for_embedding(
+                adata,
+                dataset_group=dataset_group,
+                dataset_name=name,
+                dataset_metadata=SCFM_EVAL_METADATA.get(name),
+            )
             normalized.write_h5ad(output_path, compression="gzip")
             rows.append(
                 {
@@ -553,6 +725,7 @@ def _(ATLASES, OUTPUT_DIR, SCEVAL, normalize_for_embedding, pd):
     save_summary = pd.DataFrame(
         save_normalized_group("atlases", ATLASES)
         + save_normalized_group("sceval", SCEVAL)
+        + save_normalized_group("scfm_eval", SCFM_EVAL)
     )
     save_summary
     return

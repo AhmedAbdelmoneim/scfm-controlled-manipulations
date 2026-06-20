@@ -1,0 +1,14 @@
+{
+  "dataset_id": "atlases__tabula_sapiens",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/atlases__tabula_sapiens",
+  "exported_at": "2026-06-20T20:16:22.279234+00:00",
+  "models": [
+    "pca"
+  ],
+  "n_rows": 744,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "pca_metrics.csv": 1781901594976905050
+  }
+}

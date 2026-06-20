@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
-
-import pandas as pd
 
 from metrics_dashboard.bundle import (
     METRICS_FILENAME,
@@ -16,6 +14,7 @@ from metrics_dashboard.bundle import (
     is_bundle_dataset_dir,
     load_metrics_table,
 )
+import pandas as pd
 
 
 class BundleExportTest(unittest.TestCase):
@@ -46,6 +45,21 @@ class BundleExportTest(unittest.TestCase):
                 }
             )
             df.to_csv(ev / "pca_metrics.csv", index=False)
+            pd.DataFrame(
+                {
+                    "dataset_id": [ds],
+                    "model": ["pca"],
+                    "intervention_id": ["reference"],
+                    "intervention_name": ["reference"],
+                    "metric_category": ["bio_conservation_metrics"],
+                    "metric_name": ["silhouette_label"],
+                    "space": ["embedding_reference"],
+                    "value_mean": [0.9],
+                    "value_std": [0.0],
+                    "n_cells": [100],
+                    "seed": [0],
+                }
+            ).to_csv(ev / "pca_scib_metrics.csv", index=False)
 
             out_root = root / "bundles"
             export_dataset_bundle(ds, root / ds, out_root, compression="snappy")
@@ -58,12 +72,16 @@ class BundleExportTest(unittest.TestCase):
             loaded = load_metrics_table(ds, out_root)
             self.assertEqual(len(loaded), 1)
             self.assertAlmostEqual(float(loaded["value_mean"].iloc[0]), 0.5)
+            self.assertNotIn(
+                "bio_conservation_metrics", set(loaded["metric_category"].astype(str))
+            )
 
             summary = json.loads((bundle_dir / SUMMARY_FILENAME).read_text())
             self.assertEqual(summary["dataset_id"], ds)
+            manifest = json.loads((bundle_dir / "manifest.json").read_text())
+            self.assertNotIn("pca_scib_metrics.csv", manifest["source_files_mtime_ns"])
 
     def test_mixed_param_value_exports_to_parquet(self) -> None:
-        from metrics_dashboard.bundle import coerce_metrics_for_parquet
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

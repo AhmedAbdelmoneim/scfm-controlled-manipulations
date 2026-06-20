@@ -1,0 +1,18 @@
+{
+  "dataset_id": "sceval__cell_lines",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/sceval__cell_lines",
+  "exported_at": "2026-06-20T20:16:24.679866+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scgpt"
+  ],
+  "n_rows": 2232,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781902497573218854,
+    "pca_metrics.csv": 1781901939556625115,
+    "scgpt_metrics.csv": 1781902252040905547
+  }
+}

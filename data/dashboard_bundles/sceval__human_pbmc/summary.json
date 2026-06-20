@@ -1,0 +1,9 @@
+{
+  "dataset_id": "sceval__human_pbmc",
+  "n_cells": 15476,
+  "n_genes": 19821,
+  "n_cell_types": 9,
+  "n_batches": 2,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

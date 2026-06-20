@@ -8,17 +8,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from metrics_dashboard.config import (
-    DashboardMetric,
     MODEL_LABELS,
     MODEL_ORDER,
     SET3_COLLAPSE_YLABEL,
     SET3_SHIFT_YLABEL,
     model_palette,
 )
-from metrics_dashboard.plot_helpers import prepend_reference_points, set1_column_title
+from metrics_dashboard.plot_helpers import prepend_reference_points
 from metrics_dashboard.style import streamlit_is_dark
 from metrics_dashboard.sweep_axis import sweep_x_positions
-from metrics_dashboard.transforms import SET2_SCIB_METRICS, Set1GridLayout, sort_models, std_bounds
+from metrics_dashboard.transforms import Set1MainLayout, Set2RnxLayout, sort_models, std_bounds
 
 
 def _plotly_template() -> str:
@@ -149,81 +148,71 @@ def _x_axis_title(cell_df: pd.DataFrame, x_col: str) -> str:
     return x_col
 
 
-def plot_set1_grid_plotly(
-    layout: Set1GridLayout,
-    spec: DashboardMetric,
+def plot_set1_main_metrics_plotly(
+    layout: Set1MainLayout,
     models: list[str],
     *,
     scale: float = 1.0,
 ) -> go.Figure:
-    row_labels = layout.row_labels
-    nrows = max(1, len(row_labels))
-    ncols = max(1, max((len(cols) for cols in layout.col_labels_by_row.values()), default=1))
+    rows = [
+        (metric_label, intervention)
+        for metric_label in layout.metric_labels
+        for intervention in layout.manipulations
+        if not layout.data[
+            (layout.data["metric_label"] == metric_label)
+            & (layout.data["intervention_name"] == intervention)
+        ].empty
+    ]
+    nrows = max(1, len(rows))
+    ncols = 1
     sub = layout.data
     x_col = layout.x_col
-    column_facet = layout.column_facet
-    subplot_titles: list[str] = []
-    for ri, intervention in enumerate(row_labels):
-        row_cols = layout.col_labels_by_row.get(intervention, ["all"])
-        for ci in range(ncols):
-            if ci < len(row_cols):
-                col_val = row_cols[ci]
-                cell = layout.data[layout.data["intervention_name"] == intervention]
-                if col_val != "all":
-                    cell = cell[cell[column_facet].astype(str) == str(col_val)]
-                subplot_titles.append(set1_column_title(cell, col_val, layout.column_facet))
-            else:
-                subplot_titles.append("")
     row_gap = min(0.06 + 0.025 * scale, 0.14)
-    col_gap = min(0.05 + 0.02 * scale, 0.12)
+    if nrows > 1:
+        row_gap = min(row_gap, 0.9 / (nrows - 1))
     fig = make_subplots(
         rows=nrows,
         cols=ncols,
-        subplot_titles=subplot_titles,
-        horizontal_spacing=col_gap,
+        subplot_titles=[f"{metric_label} — {intervention}" for metric_label, intervention in rows],
         vertical_spacing=row_gap,
-        shared_yaxes="all",
     )
     palette = model_palette(models)
     legend_shown = False
 
-    for ri, intervention in enumerate(row_labels):
-        row_cols = layout.col_labels_by_row.get(intervention, ["all"])
-        for ci in range(ncols):
-            row, col = ri + 1, ci + 1
-            if ci >= len(row_cols):
-                fig.update_xaxes(visible=False, row=row, col=col)
-                fig.update_yaxes(visible=False, row=row, col=col)
-                continue
-            col_val = row_cols[ci]
-            cell = sub[sub["intervention_name"] == intervention]
-            if col_val != "all":
-                cell = cell[cell[column_facet].astype(str) == str(col_val)]
-            _add_sweep_traces(
-                fig,
-                cell,
-                x_col=x_col,
-                models=models,
-                palette=palette,
-                row=row,
-                col=col,
-                show_legend=not legend_shown,
-            )
-            legend_shown = True
-            if ri == nrows - 1:
-                fig.update_xaxes(title_text=_x_axis_title(cell, x_col), row=row, col=col)
-            else:
-                fig.update_xaxes(showticklabels=False, row=row, col=col)
-            if ci == 0:
-                fig.update_yaxes(title_text=f"{intervention}", row=row, col=col)
+    for ri, (metric_label, intervention) in enumerate(rows, start=1):
+        cell = sub[
+            (sub["metric_label"] == metric_label)
+            & (sub["intervention_name"] == intervention)
+        ]
+        _add_sweep_traces(
+            fig,
+            cell,
+            x_col=x_col,
+            models=models,
+            palette=palette,
+            row=ri,
+            col=1,
+            show_legend=not legend_shown,
+            intervention_name=intervention,
+        )
+        legend_shown = True
+        fig.update_yaxes(
+            title_text=metric_label,
+            range=list(layout.y_ranges.get(metric_label, (0.0, 1.0))),
+            row=ri,
+            col=1,
+        )
+        if ri == nrows:
+            fig.update_xaxes(title_text=_x_axis_title(cell, x_col), row=ri, col=1)
+        else:
+            fig.update_xaxes(showticklabels=False, row=ri, col=1)
 
-    cell_h = min(340 * scale, 540)
-    cell_w = min(280 * scale, 440)
+    cell_h = min(240 * scale, 380)
     fig.update_layout(
         template=_plotly_template(),
-        title=dict(text=spec.label, x=0.5, y=0.995),
-        height=min(cell_h * nrows + 120, 3400),
-        width=min(cell_w * ncols + 140, 3400),
+        title=dict(text="Set 1 — Main metrics", x=0.5, y=0.995),
+        height=min(cell_h * nrows + 120, 5200),
+        width=min(1100 * scale, 1800),
         legend=dict(orientation="h", yanchor="top", y=-0.06, x=0.5, xanchor="center"),
         margin=dict(t=70, b=90, l=50, r=30),
     )
@@ -234,92 +223,89 @@ def plot_set1_grid_plotly(
     return fig
 
 
-def plot_set2_correlation_plotly(
-    wide: pd.DataFrame,
-    *,
-    x_label: str,
+def plot_set2_rnx_curves_plotly(
+    layout: Set2RnxLayout,
     models: list[str],
+    *,
     scale: float = 1.0,
 ) -> go.Figure:
-    palette = model_palette(models)
-    panels = [
-        (col, title)
-        for _metric_name, col, title in SET2_SCIB_METRICS
-        if col in wide.columns and wide[col].notna().any()
-    ]
-    if not panels:
-        panels = [("metric_score", "Metric score")]
+    row_labels = layout.manipulations
+    nrows = max(1, len(row_labels))
+    ncols = max(1, max((len(v) for v in layout.param_values_by_row.values()), default=1))
+    subplot_titles: list[str] = []
+    for intervention in row_labels:
+        col_values = layout.param_values_by_row.get(intervention, [])
+        for ci in range(ncols):
+            subplot_titles.append(
+                f"{intervention}: {col_values[ci]}" if ci < len(col_values) else ""
+            )
     fig = make_subplots(
-        rows=1,
-        cols=len(panels),
-        subplot_titles=[title for _col, title in panels],
+        rows=nrows,
+        cols=ncols,
+        subplot_titles=subplot_titles,
+        horizontal_spacing=min(0.04 + 0.015 * scale, 0.09),
+        vertical_spacing=min(
+            min(0.07 + 0.02 * scale, 0.14),
+            0.9 / (nrows - 1) if nrows > 1 else 0.0,
+        ),
+        shared_yaxes="all",
     )
-    pairs = [("metric_score", col) for col, _title in panels]
+    palette = model_palette(models)
     legend_shown = False
-    for col_idx, (xc, yc) in enumerate(pairs, start=1):
-        if xc not in wide.columns or yc not in wide.columns:
-            continue
-        df = wide.dropna(subset=[xc, yc])
-        for model in MODEL_ORDER:
-            if model not in models:
-                continue
-            mdf = df[df["model"].astype(str) == model]
-            if mdf.empty:
-                continue
-            color = palette.get(model, "#888888")
-            label = _model_label(model)
-            fig.add_trace(
-                go.Scatter(
-                    x=mdf[xc],
-                    y=mdf[yc],
-                    mode="markers",
-                    name=label,
-                    marker=dict(size=9, color=color),
-                    legendgroup=label,
-                    showlegend=not legend_shown,
-                ),
-                row=1,
-                col=col_idx,
-            )
-            for _, grp in mdf.groupby("intervention_name", observed=True):
-                g = grp.sort_values(xc)
-                if len(g) > 1:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=g[xc],
-                            y=g[yc],
-                            mode="lines",
-                            line=dict(color=color, width=1),
-                            opacity=0.35,
-                            showlegend=False,
-                            hoverinfo="skip",
-                        ),
-                        row=1,
-                        col=col_idx,
-                    )
-        legend_shown = True
-        mask = np.isfinite(df[xc]) & np.isfinite(df[yc])
-        if mask.sum() >= 3:
-            from scipy import stats
 
-            r, p = stats.pearsonr(df.loc[mask, xc], df.loc[mask, yc])
-            fig.add_annotation(
-                text=f"r = {r:.3f}<br>p = {p:.3g}",
-                xref="x domain",
-                yref="y domain",
-                x=0.04,
-                y=0.96,
-                showarrow=False,
-                row=1,
-                col=col_idx,
+    for ri, intervention in enumerate(row_labels, start=1):
+        col_values = layout.param_values_by_row.get(intervention, [])
+        for ci in range(ncols):
+            row, col = ri, ci + 1
+            if ci >= len(col_values):
+                fig.update_xaxes(visible=False, row=row, col=col)
+                fig.update_yaxes(visible=False, row=row, col=col)
+                continue
+            param_value = str(col_values[ci])
+            cell = layout.data[
+                (layout.data["intervention_name"] == intervention)
+                & (layout.data["param_value"].astype(str) == param_value)
+            ]
+            for model in MODEL_ORDER:
+                if model not in models:
+                    continue
+                mdf = cell[cell["model"].astype(str) == model].sort_values("k")
+                if mdf.empty:
+                    continue
+                color = palette.get(model, "#888888")
+                label = _model_label(model)
+                fig.add_trace(
+                    go.Scatter(
+                        x=mdf["k"],
+                        y=mdf["rnx"],
+                        mode="lines",
+                        name=label,
+                        line=dict(color=color, width=2),
+                        legendgroup=label,
+                        showlegend=not legend_shown,
+                    ),
+                    row=row,
+                    col=col,
+                )
+            legend_shown = True
+            fig.update_yaxes(
+                title_text="R_NX" if ci == 0 else None,
+                range=list(layout.y_range),
+                row=row,
+                col=col,
             )
-        fig.update_xaxes(title_text=x_label, row=1, col=col_idx)
+            if ri == nrows:
+                fig.update_xaxes(title_text="k", row=row, col=col)
+            else:
+                fig.update_xaxes(showticklabels=False, row=row, col=col)
+
     fig.update_layout(
         template=_plotly_template(),
-        height=min(420 * scale, 900),
-        width=min(1200 * scale, 2100),
-        legend=dict(orientation="h", yanchor="top", y=-0.12, x=0.5, xanchor="center"),
-        margin=dict(b=80),
+        title=dict(text="Set 2 — R_NX curves", x=0.5, y=0.995),
+        height=min(260 * scale * nrows + 120, 5200),
+        width=min(260 * scale * ncols + 140, 3600),
+        legend=dict(orientation="h", yanchor="top", y=-0.06, x=0.5, xanchor="center"),
+        margin=dict(t=70, b=90, l=50, r=30),
     )
     return fig
 

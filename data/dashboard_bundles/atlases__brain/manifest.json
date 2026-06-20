@@ -1,0 +1,22 @@
+{
+  "dataset_id": "atlases__brain",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/atlases__brain",
+  "exported_at": "2026-06-20T20:16:07.572476+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scconcept",
+    "scgpt",
+    "scimilarity"
+  ],
+  "n_rows": 3720,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781900214042982672,
+    "pca_metrics.csv": 1781900082133176924,
+    "scconcept_metrics.csv": 1781900334656635258,
+    "scgpt_metrics.csv": 1781900162623278777,
+    "scimilarity_metrics.csv": 1781900254603538188
+  }
+}

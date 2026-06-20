@@ -1,0 +1,9 @@
+{
+  "dataset_id": "sceval__pancrm",
+  "n_cells": 11125,
+  "n_genes": 24853,
+  "n_cell_types": 13,
+  "n_batches": 5,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

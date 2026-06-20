@@ -1,0 +1,9 @@
+{
+  "dataset_id": "atlases__brain",
+  "n_cells": 5000,
+  "n_genes": 19358,
+  "n_cell_types": 2,
+  "n_batches": 533,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

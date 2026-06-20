@@ -1,0 +1,9 @@
+{
+  "dataset_id": "sceval__pbmc_368k",
+  "n_cells": 4638,
+  "n_genes": 14212,
+  "n_cell_types": 8,
+  "n_batches": 2,
+  "cell_type_column": "cell_type",
+  "batch_column": "batch"
+}

@@ -19,6 +19,19 @@ from metrics_dashboard.obs_columns import (
 METRICS_FILENAME = "metrics.parquet"
 SUMMARY_FILENAME = "summary.json"
 MANIFEST_FILENAME = "manifest.json"
+SCIB_METRIC_CATEGORIES = frozenset(
+    {
+        "bio_conservation_metrics",
+        "batch_correction_metrics",
+    }
+)
+
+
+def drop_scib_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove scIB bio/batch rows from dashboard artifacts."""
+    if df.empty or "metric_category" not in df.columns:
+        return df
+    return df[~df["metric_category"].astype(str).isin(SCIB_METRIC_CATEGORIES)].copy()
 
 
 def coerce_metrics_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
@@ -195,23 +208,17 @@ def load_metrics_from_legacy(
     csv_paths = sorted(
         p for p in ev.glob("*_metrics.csv") if "_scib_metrics" not in p.stem
     )
-    scib_paths = sorted(ev.glob("*_scib_metrics.csv"))
     if models is not None:
         model_set = set(models)
         csv_paths = [p for p in csv_paths if p.stem.removesuffix("_metrics") in model_set]
-        scib_paths = [
-            p for p in scib_paths if p.stem.removesuffix("_scib_metrics") in model_set
-        ]
 
     frames: list[pd.DataFrame] = []
     for path in csv_paths:
         frames.append(pd.read_csv(path))
-    for path in scib_paths:
-        frames.append(pd.read_csv(path))
     if not frames:
         return pd.DataFrame()
 
-    metrics_df = pd.concat(frames, ignore_index=True)
+    metrics_df = drop_scib_metrics(pd.concat(frames, ignore_index=True))
     if "dataset_id" not in metrics_df.columns or metrics_df["dataset_id"].isna().all():
         metrics_df["dataset_id"] = dataset_id
 
@@ -250,6 +257,7 @@ def load_metrics_table(
         df = pd.read_parquet(bundle_path)
         if models is not None:
             df = df[df["model"].astype(str).isin(models)]
+        df = drop_scib_metrics(df)
         df["model"] = pd.Categorical(
             df["model"].astype(str), categories=MODEL_ORDER, ordered=True
         )
@@ -272,8 +280,8 @@ def build_metrics_table(
         df = pd.read_parquet(dataset_root / METRICS_FILENAME)
         if models is not None:
             df = df[df["model"].astype(str).isin(models)]
-        return df
-    return load_metrics_from_legacy(dataset_id, dataset_root, models)
+        return drop_scib_metrics(df)
+    return drop_scib_metrics(load_metrics_from_legacy(dataset_id, dataset_root, models))
 
 
 def export_dataset_bundle(
@@ -304,10 +312,8 @@ def export_dataset_bundle(
     ev = dataset_root / "results" / "evaluation"
     source_files = {
         p.name: int(p.stat().st_mtime_ns)
-        for p in sorted(
-            list(ev.glob("*_metrics.csv")) + list(ev.glob("*_scib_metrics.csv"))
-        )
-        if p.is_file()
+        for p in sorted(ev.glob("*_metrics.csv"))
+        if p.is_file() and "_scib_metrics" not in p.stem
     }
     manifest = {
         "dataset_id": dataset_id,

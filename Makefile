@@ -69,6 +69,11 @@ manipulate:
 evaluate:
 	@scripts/run_evaluate.sh $(CONFIG)
 
+## Run generated per-dataset evaluations, continuing after individual failures
+.PHONY: evaluate-generated
+evaluate-generated:
+	@scripts/run_generated_evaluations.sh
+
 ## Reference-only scIB bio/batch metrics into results_dir/evaluation/{model}_scib_metrics.csv
 .PHONY: evaluate-scib
 evaluate-scib:

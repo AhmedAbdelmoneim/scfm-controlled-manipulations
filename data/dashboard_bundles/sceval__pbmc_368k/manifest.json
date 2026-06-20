@@ -1,0 +1,24 @@
+{
+  "dataset_id": "sceval__pbmc_368k",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/sceval__pbmc_368k",
+  "exported_at": "2026-06-20T20:16:37.322330+00:00",
+  "models": [
+    "geneformer",
+    "pca",
+    "scconcept",
+    "scfoundation",
+    "scgpt",
+    "scimilarity"
+  ],
+  "n_rows": 4464,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "geneformer_metrics.csv": 1781913324143311786,
+    "pca_metrics.csv": 1781913158669049795,
+    "scconcept_metrics.csv": 1781914058648352873,
+    "scfoundation_metrics.csv": 1781913907730289602,
+    "scgpt_metrics.csv": 1781913257741404087,
+    "scimilarity_metrics.csv": 1781913960257007720
+  }
+}

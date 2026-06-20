@@ -1,0 +1,14 @@
+{
+  "dataset_id": "sceval__immune_all_human",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/sceval__immune_all_human",
+  "exported_at": "2026-06-20T20:16:32.621619+00:00",
+  "models": [
+    "pca"
+  ],
+  "n_rows": 744,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "pca_metrics.csv": 1781909833254579953
+  }
+}

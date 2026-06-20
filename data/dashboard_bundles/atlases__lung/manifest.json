@@ -1,0 +1,14 @@
+{
+  "dataset_id": "atlases__lung",
+  "source_dir": "/tmp/scfm-dashboard-stage.LdrYLr/atlases__lung",
+  "exported_at": "2026-06-20T20:16:15.187979+00:00",
+  "models": [
+    "pca"
+  ],
+  "n_rows": 744,
+  "metrics_file": "metrics.parquet",
+  "compression": "zstd",
+  "source_files_mtime_ns": {
+    "pca_metrics.csv": 1781900388399371762
+  }
+}

@@ -137,7 +137,7 @@ DASHBOARD_METRICS: dict[str, DashboardMetric] = {
     ),
     "clustering_ari": DashboardMetric(
         key="clustering_ari",
-        label="Leiden clustering ARI",
+        label="Leiden ARI",
         description=(
             "Adjusted Rand index between independent Leiden clusterings on reference "
             "and manipulated embeddings. Higher is more stable."
@@ -151,28 +151,34 @@ DASHBOARD_METRICS: dict[str, DashboardMetric] = {
 }
 
 DASHBOARD_METRIC_KEYS = list(DASHBOARD_METRICS.keys())
+MAIN_METRIC_KEYS = [
+    "viscore_local_sp",
+    "viscore_global_sp",
+    "distcorr",
+    "clustering_ari",
+]
+MAIN_METRICS = [DASHBOARD_METRICS[key] for key in MAIN_METRIC_KEYS]
 
 # Fixed subplot scale (formerly a sidebar slider).
 DEFAULT_PLOT_SCALE = 1.25
 
 PLOT_SET_DESCRIPTIONS = {
     "set1": (
-        "Grid layout: **rows** = manipulation type; **columns** = manipulation config "
-        "(e.g. fraction, dropout rate, shuffle variant); **x-axis** = sweep level for the "
-        "selected metric. "
-        "Colored lines = models. "
+        "Main metrics across manipulation strength. Metric/manipulation panels show "
+        "manipulation parameter on the x-axis and metric value on the y-axis. "
+        "Colored lines = models; fixed default y-ranges make panels comparable. "
         "Bands = mean ± 1 std across cells; dashed = permutation null mean."
     ),
     "set2": (
-        "Integration vs structure: each point is one run (scIB bio/batch scores on the "
-        "manipulated embedding). Lines connect points within the same manipulation. "
-        "Correlation and p-value are Pearson on displayed points."
+        "R_NX curves in depth. Rows are manipulation types, columns are manipulation "
+        "parameters, x-axis is neighborhood size k, y-axis is R_NX, and colored lines "
+        "are models."
     ),
     "set3": (
         "Columns = manipulation; x-axis = sweep level (numeric fraction/rate/k or shuffle "
         "variant). Top row: within-manipulation pairwise distance (collapse; reference point "
         "at x=0). Bottom row: per-cell shift from reference divided by ref within-cluster "
-        "distance (no reference point on this row). Lines = models."
+        "distance. Lines = models."
     ),
 }
 

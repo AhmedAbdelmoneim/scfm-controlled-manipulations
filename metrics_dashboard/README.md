@@ -1,6 +1,6 @@
 # ScFMs Metrics Dashboard
 
-Streamlit app for structure-evaluation metrics. Data comes from checked-in Parquet bundles under `data/dashboard_bundles/` (no vault mount or path configuration in the UI).
+Streamlit app for structure-evaluation metrics. Data comes from checked-in Parquet bundles under `data/dashboard_bundles/` (no vault mount or path configuration in the UI). scIB bio/batch metrics are intentionally excluded from these dashboard bundles.
 
 ## Run
 
@@ -23,12 +23,12 @@ make export-dashboard-bundle SOURCE=/vault/.../processed/sceval/dendritic_cells
 # Commit data/dashboard_bundles/{dataset_id}/
 ```
 
-Each bundle contains `metrics.parquet`, `summary.json`, and `manifest.json`.
+Each bundle contains `metrics.parquet`, `summary.json`, and `manifest.json`. `metrics.parquet` contains structure, R_NX, and embedding shift/collapse rows only.
 
 ## Pages
 
 - **Home** — dataset catalog
-- **Metrics** — three plot sets
+- **Metrics** — main metrics, R_NX curves, and embedding shift/collapse
 - **Dataset summary** — cells, genes, cell types, batches
 
 ## Tests
