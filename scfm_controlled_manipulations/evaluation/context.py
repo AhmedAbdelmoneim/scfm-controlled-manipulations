@@ -104,9 +104,7 @@ def load_intervention_bundle(
 
     ref_indexer = obs_position_indexer(target_obs, alignment.shared_obs)
     emb_ref = model_ctx.emb_ref[ref_indexer]
-    emb_man = dense_embedding_aligned_to_obs(
-        ad_emb_man, alignment.shared_obs, label="emb_man"
-    )
+    emb_man = dense_embedding_aligned_to_obs(ad_emb_man, alignment.shared_obs, label="emb_man")
     obs = dataset_ctx.obs.loc[alignment.shared_obs].copy()
 
     return AlignedBundle(

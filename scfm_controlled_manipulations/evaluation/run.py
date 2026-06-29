@@ -57,6 +57,8 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "stats_shift_pairwise_cell_subsample_n": 500,
     "stats_shift_pairwise_max_pairs": 10_000,
     "scib_benchmark_n_jobs": 1,
+    "scib_enable_bio": True,
+    "scib_enable_batch": True,
     "distance_correlation_subsample_n": None,
     "trajectory_key": "trajectory",
     "trajectory_n_neighbors": 15,
@@ -112,6 +114,8 @@ def validate_evaluation_config(ev: dict[str, Any]) -> dict[str, Any]:
     validated["stats_shift_pairwise_max_pairs"] = pairwise_max
 
     validated["scib_benchmark_n_jobs"] = max(1, int(validated.get("scib_benchmark_n_jobs", 1)))
+    validated["scib_enable_bio"] = bool(validated.get("scib_enable_bio", True))
+    validated["scib_enable_batch"] = bool(validated.get("scib_enable_batch", True))
     trajectory_key = str(validated.get("trajectory_key", "trajectory")).strip()
     if not trajectory_key:
         raise ValueError("evaluation.trajectory_key must be a non-empty string")

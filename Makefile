@@ -84,6 +84,11 @@ evaluate-scib:
 evaluate-trajectory:
 	@scripts/run_evaluate_trajectory.sh $(CONFIG)
 
+## Reference-only enabled benchmarks across all datasets (foreground; pass ARGS="--dry-run")
+.PHONY: evaluate-reference-benchmarks
+evaluate-reference-benchmarks:
+	@scripts/run_reference_benchmarks.sh --config $(CONFIG) $(ARGS)
+
 ## Profile evaluate on a synthetic fixture (see scripts/benchmark_eval.py)
 .PHONY: benchmark-eval
 benchmark-eval:

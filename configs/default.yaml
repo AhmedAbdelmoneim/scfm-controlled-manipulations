@@ -60,6 +60,8 @@ evaluation:
   stats_shift_pairwise_max_pairs: 10000
   # Used by ``make evaluate-scib`` only (not ``make evaluate``).
   scib_benchmark_n_jobs: 1
+  scib_enable_bio: true
+  scib_enable_batch: true
   # Used by ``make evaluate-trajectory`` only (not ``make evaluate``).
   trajectory_key: trajectory
   trajectory_n_neighbors: 15

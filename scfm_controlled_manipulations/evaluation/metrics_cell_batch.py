@@ -49,6 +49,16 @@ def _default_bio_conservation() -> BioConservation:
     )
 
 
+def _disabled_bio_conservation() -> BioConservation:
+    return BioConservation(
+        isolated_labels=False,
+        nmi_ari_cluster_labels_kmeans=False,
+        nmi_ari_cluster_labels_leiden=False,
+        silhouette_label=False,
+        clisi_knn=False,
+    )
+
+
 def _default_batch_correction() -> BatchCorrection:
     return BatchCorrection(
         bras=True,
@@ -56,6 +66,16 @@ def _default_batch_correction() -> BatchCorrection:
         kbet_per_label=True,
         graph_connectivity=True,
         pcr_comparison=True,
+    )
+
+
+def _disabled_batch_correction() -> BatchCorrection:
+    return BatchCorrection(
+        bras=False,
+        ilisi_knn=False,
+        kbet_per_label=False,
+        graph_connectivity=False,
+        pcr_comparison=False,
     )
 
 
@@ -110,6 +130,36 @@ def _build_adata(
     adata = ad.AnnData(X=x, obs=obs)
     adata.obsm["embedding"] = emb
     return adata
+
+
+def _metadata_for_enabled_metrics(
+    obs_df: pd.DataFrame,
+    *,
+    cell_type_col: str | None,
+    batch_col: str | None,
+    enable_bio: bool,
+    enable_batch: bool,
+) -> tuple[pd.DataFrame, str | None, str | None, bool, bool]:
+    obs = obs_df.copy()
+    label_key = cell_type_col if _obs_col_present(obs, cell_type_col) else None
+    batch_key = batch_col if _obs_col_present(obs, batch_col) else None
+
+    if enable_bio and label_key is None:
+        logger.warning("scib_benchmark: bio metrics requested but cell_type column is missing")
+        enable_bio = False
+    if enable_batch and batch_key is None:
+        logger.warning("scib_benchmark: batch metrics requested but batch column is missing")
+        enable_batch = False
+    if not enable_bio and not enable_batch:
+        return obs, None, None, False, False
+
+    if label_key is None:
+        label_key = "__scfm_dummy_label"
+        obs[label_key] = "all_cells"
+    if batch_key is None:
+        batch_key = "__scfm_dummy_batch"
+        obs[batch_key] = "all_batches"
+    return obs, label_key, batch_key, enable_bio, enable_batch
 
 
 def _safe_benchmark(bm: Benchmarker) -> pd.DataFrame:
@@ -215,7 +265,11 @@ def _run_benchmarker_rows(
     seed: int,
     n_cells: int,
     n_jobs: int,
+    enable_bio: bool = True,
+    enable_batch: bool = True,
 ) -> list[dict[str, Any]]:
+    if not enable_bio and not enable_batch:
+        return []
     adata = _build_adata(
         counts=counts,
         embedding=embedding,
@@ -228,8 +282,12 @@ def _run_benchmarker_rows(
         batch_key=batch_col,
         label_key=cell_type_col,
         embedding_obsm_keys=["embedding"],
-        bio_conservation_metrics=_default_bio_conservation(),
-        batch_correction_metrics=_default_batch_correction(),
+        bio_conservation_metrics=(
+            _default_bio_conservation() if enable_bio else _disabled_bio_conservation()
+        ),
+        batch_correction_metrics=(
+            _default_batch_correction() if enable_batch else _disabled_batch_correction()
+        ),
         n_jobs=max(1, int(n_jobs)),
         progress_bar=False,
     )
@@ -261,24 +319,40 @@ def compute_cell_batch_reference_rows(
     batch_col: str | None,
     n_cells: int,
     n_jobs: int = 1,
+    enable_bio: bool = True,
+    enable_batch: bool = True,
 ) -> list[dict[str, Any]]:
     """Benchmarker metrics for reference embedding only."""
-    if not _obs_col_present(obs_df, cell_type_col) or not _obs_col_present(obs_df, batch_col):
+    (
+        obs_for_metrics,
+        metric_cell_type_col,
+        metric_batch_col,
+        metric_enable_bio,
+        metric_enable_batch,
+    ) = _metadata_for_enabled_metrics(
+        obs_df,
+        cell_type_col=cell_type_col,
+        batch_col=batch_col,
+        enable_bio=enable_bio,
+        enable_batch=enable_batch,
+    )
+    if metric_cell_type_col is None or metric_batch_col is None:
         return []
-    assert cell_type_col is not None and batch_col is not None
     logger.info(
-        "scib_benchmark: reference=%s model=%s space=%s n_cells=%d",
+        "scib_benchmark: reference=%s model=%s space=%s n_cells=%d bio=%s batch=%s",
         intervention_id,
         model,
         space_label,
         n_cells,
+        metric_enable_bio,
+        metric_enable_batch,
     )
     return _run_benchmarker_rows(
         counts=counts,
         embedding=mat,
-        obs_df=obs_df,
-        cell_type_col=cell_type_col,
-        batch_col=batch_col,
+        obs_df=obs_for_metrics,
+        cell_type_col=metric_cell_type_col,
+        batch_col=metric_batch_col,
         space_label=space_label,
         dataset_id=dataset_id,
         model=model,
@@ -287,4 +361,6 @@ def compute_cell_batch_reference_rows(
         seed=seed,
         n_cells=n_cells,
         n_jobs=n_jobs,
+        enable_bio=metric_enable_bio,
+        enable_batch=metric_enable_batch,
     )

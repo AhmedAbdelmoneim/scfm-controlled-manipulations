@@ -113,7 +113,9 @@ def common_obs_alignment(
     )
 
 
-def obs_position_indexer(source_obs: pd.Index | list[str], target_obs: pd.Index | list[str]) -> np.ndarray:
+def obs_position_indexer(
+    source_obs: pd.Index | list[str], target_obs: pd.Index | list[str]
+) -> np.ndarray:
     """Integer positions that order ``source_obs`` rows like ``target_obs``."""
     source_index = pd.Index(source_obs)
     target_index = pd.Index(target_obs)

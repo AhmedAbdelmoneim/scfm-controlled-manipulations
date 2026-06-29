@@ -54,18 +54,23 @@ def run_evaluate_scib(cfg: dict[str, Any]) -> None:
     dataset_id = _dataset_id(cfg, ev)
     models = list(cfg["models"])
     scib_benchmark_n_jobs = max(1, int(ev.get("scib_benchmark_n_jobs", 1)))
+    enable_bio = bool(ev.get("scib_enable_bio", True))
+    enable_batch = bool(ev.get("scib_enable_batch", True))
     cell_type_col_config = _optional_obs_column(ev.get("cell_type_col"))
     batch_col_config = _optional_obs_column(ev.get("batch_col"))
 
     evaluation_dir(results_dir).mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Evaluate-scib: dataset_id=%s results_dir=%s manipulations_dir=%s embeddings_root=%s ref_id=%s",
+        "Evaluate-scib: dataset_id=%s results_dir=%s manipulations_dir=%s embeddings_root=%s "
+        "ref_id=%s bio=%s batch=%s",
         dataset_id,
         results_dir,
         manip_dir,
         embeddings_root,
         ref_id,
+        enable_bio,
+        enable_batch,
     )
 
     t0 = time.perf_counter()
@@ -140,6 +145,8 @@ def run_evaluate_scib(cfg: dict[str, Any]) -> None:
             batch_col=batch_col,
             n_cells=dataset_ctx.n_cells,
             n_jobs=scib_benchmark_n_jobs,
+            enable_bio=enable_bio,
+            enable_batch=enable_batch,
         )
         if not rows:
             logger.warning("Model %s: no scIB rows produced; skipping CSV write", model)

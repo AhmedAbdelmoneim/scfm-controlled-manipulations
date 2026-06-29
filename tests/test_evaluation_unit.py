@@ -218,8 +218,96 @@ class CellBatchMetricsTest(unittest.TestCase):
                 cell_type_col=None,
                 batch_col="batch",
                 n_cells=80,
+                enable_bio=True,
+                enable_batch=False,
             )
             self.assertEqual(rows, [])
+
+    def test_bio_only_uses_dummy_batch_metadata(self) -> None:
+        from unittest import mock
+
+        from scfm_controlled_manipulations.evaluation.data import load_manipulation_counts
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_batch_reference_rows,
+        )
+
+        bundle = self._toy_bundle(n=20)
+        obs = bundle.obs[["cell_type"]].copy()
+        fake_rows = [{"metric_category": "bio_conservation_metrics"}]
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch(
+                "scfm_controlled_manipulations.evaluation.metrics_cell_batch._run_benchmarker_rows",
+                return_value=fake_rows,
+            ) as run_benchmark,
+        ):
+            results_dir = Path(tmp)
+            self._write_counts_fixture(results_dir, n=20, intervention_id="reference")
+            rows = compute_cell_batch_reference_rows(
+                counts=load_manipulation_counts(results_dir, "reference"),
+                mat=bundle.emb_ref[:20],
+                obs_df=obs,
+                space_label="embedding_reference",
+                dataset_id="toy",
+                model="m",
+                intervention_id="reference",
+                intervention_name="reference",
+                seed=0,
+                cell_type_col="cell_type",
+                batch_col=None,
+                n_cells=20,
+                enable_bio=True,
+                enable_batch=False,
+            )
+        self.assertEqual(rows, fake_rows)
+        kwargs = run_benchmark.call_args.kwargs
+        self.assertEqual(kwargs["cell_type_col"], "cell_type")
+        self.assertEqual(kwargs["batch_col"], "__scfm_dummy_batch")
+        self.assertTrue(kwargs["enable_bio"])
+        self.assertFalse(kwargs["enable_batch"])
+
+    def test_batch_only_uses_dummy_cell_type_metadata(self) -> None:
+        from unittest import mock
+
+        from scfm_controlled_manipulations.evaluation.data import load_manipulation_counts
+        from scfm_controlled_manipulations.evaluation.metrics_cell_batch import (
+            compute_cell_batch_reference_rows,
+        )
+
+        bundle = self._toy_bundle(n=20)
+        obs = bundle.obs[["batch"]].copy()
+        fake_rows = [{"metric_category": "batch_correction_metrics"}]
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch(
+                "scfm_controlled_manipulations.evaluation.metrics_cell_batch._run_benchmarker_rows",
+                return_value=fake_rows,
+            ) as run_benchmark,
+        ):
+            results_dir = Path(tmp)
+            self._write_counts_fixture(results_dir, n=20, intervention_id="reference")
+            rows = compute_cell_batch_reference_rows(
+                counts=load_manipulation_counts(results_dir, "reference"),
+                mat=bundle.emb_ref[:20],
+                obs_df=obs,
+                space_label="embedding_reference",
+                dataset_id="toy",
+                model="m",
+                intervention_id="reference",
+                intervention_name="reference",
+                seed=0,
+                cell_type_col=None,
+                batch_col="batch",
+                n_cells=20,
+                enable_bio=False,
+                enable_batch=True,
+            )
+        self.assertEqual(rows, fake_rows)
+        kwargs = run_benchmark.call_args.kwargs
+        self.assertEqual(kwargs["cell_type_col"], "__scfm_dummy_label")
+        self.assertEqual(kwargs["batch_col"], "batch")
+        self.assertFalse(kwargs["enable_bio"])
+        self.assertTrue(kwargs["enable_batch"])
 
     def test_reference_rows_use_reference_intervention_id(self) -> None:
         from unittest import mock
@@ -779,6 +867,77 @@ class RunEvaluateTrajectoryTest(unittest.TestCase):
             self.assertTrue((df["space"] == "embedding_reference").all())
             self.assertEqual(set(df["metric_category"].unique()), {"trajectory_metrics"})
             self.assertIn("ordering_correlation_spearman", set(df["metric_name"]))
+
+
+class ReferenceBenchmarksScriptTest(unittest.TestCase):
+    def test_dataset_tasks_and_config_are_derived_from_csv_and_template(self) -> None:
+        import sys
+
+        root = Path(__file__).resolve().parents[1]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+        from scripts.run_reference_benchmarks import (
+            DatasetBenchmarkTask,
+            build_dataset_config,
+            load_dataset_tasks,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "datasets.csv"
+            pd.DataFrame(
+                [
+                    {
+                        "Dataset Name": "emt",
+                        "Cell type task": "FALSE",
+                        "Batch task": "TRUE",
+                        "Trajectory task": "TRUE",
+                    },
+                    {
+                        "Dataset Name": "unused",
+                        "Cell type task": "FALSE",
+                        "Batch task": "FALSE",
+                        "Trajectory task": "FALSE",
+                    },
+                ]
+            ).to_csv(csv_path, index=False)
+            tasks = load_dataset_tasks(csv_path)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].dataset_name, "emt")
+        self.assertFalse(tasks[0].cell_type_task)
+        self.assertTrue(tasks[0].batch_task)
+        self.assertTrue(tasks[0].trajectory_task)
+
+        template = {
+            "input_h5ad": "/data/<dataset_name>.h5ad",
+            "embeddings_root": "/old/<dataset_name>",
+            "manipulations_dir": "/old_man/<dataset_name>",
+            "results_dir": "/old_results/<dataset_name>",
+            "models": ["pca", "scgpt"],
+            "evaluation": {"dataset_id": "template", "cell_type_col": "cell_type"},
+        }
+        cfg = build_dataset_config(
+            template,
+            DatasetBenchmarkTask(
+                dataset_name="emt",
+                cell_type_task=False,
+                batch_task=True,
+                trajectory_task=True,
+            ),
+            embeddings_root=Path("/emb"),
+            manipulations_root=Path("/man"),
+            results_root=Path("/res"),
+            models=["pca"],
+        )
+        self.assertEqual(cfg["input_h5ad"], "/data/emt.h5ad")
+        self.assertEqual(cfg["embeddings_root"], "/emb/emt")
+        self.assertEqual(cfg["manipulations_dir"], "/man/emt")
+        self.assertEqual(cfg["results_dir"], "/res/emt")
+        self.assertEqual(cfg["models"], ["pca"])
+        self.assertEqual(cfg["evaluation"]["dataset_id"], "emt")
+        self.assertFalse(cfg["evaluation"]["scib_enable_bio"])
+        self.assertTrue(cfg["evaluation"]["scib_enable_batch"])
 
 
 if __name__ == "__main__":
