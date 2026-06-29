@@ -22,6 +22,7 @@ import yaml
 from scfm_controlled_manipulations import interventions
 from scfm_controlled_manipulations.evaluation.run import run_evaluate
 from scfm_controlled_manipulations.evaluation.run_scib import run_evaluate_scib
+from scfm_controlled_manipulations.evaluation.run_trajectory import run_evaluate_trajectory
 from scfm_controlled_manipulations.io import (
     intervention_id,
     manipulation_path,
@@ -510,6 +511,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="scIB bio/batch metrics on reference embedding only (separate CSV)",
     )
     p_scib.add_argument("--config", type=Path, required=True)
+
+    p_traj = sub.add_parser(
+        "evaluate-trajectory",
+        help="Trajectory inference metrics on reference embedding only (separate CSV)",
+    )
+    p_traj.add_argument("--config", type=Path, required=True)
     return parser
 
 
@@ -522,6 +529,9 @@ def _run_command(command: str, cfg: dict[str, Any]) -> None:
         return
     if command == "evaluate-scib":
         run_evaluate_scib(cfg)
+        return
+    if command == "evaluate-trajectory":
+        run_evaluate_trajectory(cfg)
         return
     raise ValueError(f"Unsupported command: {command}")
 

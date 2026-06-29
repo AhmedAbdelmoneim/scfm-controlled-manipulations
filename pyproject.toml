@@ -60,4 +60,5 @@ force-sort-within-sections = true
 "scfm_controlled_manipulations/pipeline.py" = ["E402"]
 "scfm_controlled_manipulations/evaluation/run.py" = ["E402"]
 "scfm_controlled_manipulations/evaluation/run_scib.py" = ["E402"]
+"scfm_controlled_manipulations/evaluation/run_trajectory.py" = ["E402"]
 

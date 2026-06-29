@@ -47,6 +47,50 @@ class PathLayoutTest(unittest.TestCase):
             Path("/data/manipulations/gene_shuffle_d9d8843bc9e3.h5ad"),
         )
 
+    def test_run_evaluate_skips_model_with_missing_reference_embedding(self) -> None:
+        from scfm_controlled_manipulations.evaluation.run import run_evaluate
+        from scfm_controlled_manipulations.io import intervention_id
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results_dir = root / "results"
+            manip_dir = results_dir / "manipulations"
+            emb_root = root / "embeddings"
+            manip_dir.mkdir(parents=True)
+            (emb_root / "pca").mkdir(parents=True)
+
+            obs_names = ["cell_0", "cell_1", "cell_2"]
+            obs = pd.DataFrame(index=obs_names)
+            var = pd.DataFrame(index=["gene_0", "gene_1"])
+            counts = sp.csr_matrix(np.ones((3, 2), dtype=np.float32))
+            ad_ref = ad.AnnData(X=counts, obs=obs.copy(), var=var.copy())
+            ad_ref.write_h5ad(manip_dir / "reference.h5ad")
+
+            specs = [{"name": "downsample", "kwargs": {"fraction": 0.5}}]
+            iid = intervention_id("downsample", {"fraction": 0.5})
+            ad_man = ad.AnnData(X=counts.copy(), obs=obs.copy(), var=var.copy())
+            ad_man.write_h5ad(manip_dir / f"{iid}.h5ad")
+            ad_emb_man = ad.AnnData(
+                X=np.ones((3, 2), dtype=np.float32),
+                obs=obs.copy(),
+            )
+            ad_emb_man.write_h5ad(emb_root / "pca" / f"pca_{iid}.h5ad")
+
+            cfg = {
+                "results_dir": str(results_dir),
+                "embeddings_root": str(emb_root),
+                "interventions": specs,
+                "models": ["pca"],
+                "reference_intervention_id": "reference",
+                "seed": 0,
+                "evaluation": {
+                    "dataset_id": "toy",
+                    "evaluation_workers": 1,
+                },
+            }
+            run_evaluate(cfg)
+            self.assertFalse((results_dir / "evaluation" / "pca_metrics.csv").exists())
+
 
 class SweepTest(unittest.TestCase):
     def test_expand_cartesian(self) -> None:
@@ -200,9 +244,12 @@ class CellBatchMetricsTest(unittest.TestCase):
                 "seed": 0,
             }
         ]
-        with tempfile.TemporaryDirectory() as tmp, mock.patch(
-            "scfm_controlled_manipulations.evaluation.metrics_cell_batch._run_benchmarker_rows",
-            return_value=fake_rows,
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch(
+                "scfm_controlled_manipulations.evaluation.metrics_cell_batch._run_benchmarker_rows",
+                return_value=fake_rows,
+            ),
         ):
             results_dir = Path(tmp)
             self._write_counts_fixture(results_dir, n=60, intervention_id="reference")
@@ -318,10 +365,7 @@ class StructureMetricsTest(unittest.TestCase):
             intervention_name="reference",
             seed=0,
         )
-        emb_sl = df[
-            (df["space"] == "embedding")
-            & (df["metric_name"] == "viscore_local_sp")
-        ]
+        emb_sl = df[(df["space"] == "embedding") & (df["metric_name"] == "viscore_local_sp")]
         self.assertEqual(len(emb_sl), 1)
         self.assertAlmostEqual(float(emb_sl.iloc[0]["value_mean"]), 1.0, places=5)
 
@@ -371,9 +415,7 @@ class EmbeddingAlignmentTest(unittest.TestCase):
             obs={"cell_id": ["a", "b"]},
         )
         with self.assertRaises(ValueError):
-            dense_embedding_aligned_to_obs(
-                adata, pd.Index(["a", "b", "c"]), label="emb"
-            )
+            dense_embedding_aligned_to_obs(adata, pd.Index(["a", "b", "c"]), label="emb")
 
 
 class DistributionSummaryTest(unittest.TestCase):
@@ -427,13 +469,11 @@ class StatsShiftMetricsTest(unittest.TestCase):
             pairwise_max_pairs=None,
         )
         paired = df[
-            (df["metric_name"] == "paired_cell_l2_norm")
-            & (df["space"] == "embedding")
+            (df["metric_name"] == "paired_cell_l2_norm") & (df["space"] == "embedding")
         ].iloc[0]
         self.assertAlmostEqual(paired["value_mean"], 1.0, places=5)
         cos_row = df[
-            (df["metric_name"] == "shift_pairwise_cosine")
-            & (df["space"] == "embedding")
+            (df["metric_name"] == "shift_pairwise_cosine") & (df["space"] == "embedding")
         ].iloc[0]
         self.assertAlmostEqual(cos_row["value_mean"], 1.0, places=5)
         self.assertNotIn("shift_dot_with_mean", df["metric_name"].values)
@@ -453,8 +493,7 @@ class StatsShiftMetricsTest(unittest.TestCase):
             seed=0,
         )
         col_ref = df[
-            (df["metric_name"] == "col_variance_ref")
-            & (df["space"] == "embedding")
+            (df["metric_name"] == "col_variance_ref") & (df["space"] == "embedding")
         ].iloc[0]
         self.assertIn("value_q25", col_ref.index)
         self.assertFalse(np.isnan(col_ref["value_mean"]))
@@ -475,19 +514,16 @@ class StatsShiftMetricsTest(unittest.TestCase):
             intervention_name="n",
             seed=0,
         )
-        col_ref = df[
-            (df["metric_name"] == "col_mean_ref")
-            & (df["space"] == "embedding")
-        ].iloc[0]
+        col_ref = df[(df["metric_name"] == "col_mean_ref") & (df["space"] == "embedding")].iloc[0]
         self.assertAlmostEqual(col_ref["value_mean"], float(np.mean(expected_means)), places=5)
         self.assertFalse(np.isnan(col_ref["value_mean"]))
 
     def test_reference_cache_idempotent(self) -> None:
-        from scfm_controlled_manipulations.evaluation.data import AlignedBundle
         from scfm_controlled_manipulations.evaluation.context import (
             DatasetEvaluateContext,
             ModelEvaluateContext,
         )
+        from scfm_controlled_manipulations.evaluation.data import AlignedBundle
         from scfm_controlled_manipulations.evaluation.metrics_stats_shift import (
             compute_embedding_shift,
             compute_embedding_stats,
@@ -605,10 +641,13 @@ class RunEvaluateScibTest(unittest.TestCase):
             sys.path.insert(0, str(root))
 
         from scripts.benchmark_eval import setup_fixture
+
         from scfm_controlled_manipulations.evaluation.run_scib import run_evaluate_scib
         from scfm_controlled_manipulations.io import evaluation_scib_metrics_csv_path
 
         config_path = root / "configs" / "experiments" / "atlases.yaml"
+        if not config_path.exists():
+            config_path = root / "configs" / "default.yaml"
         with tempfile.TemporaryDirectory() as tmp:
             fixture_root = Path(tmp)
             run_cfg = setup_fixture(
@@ -632,6 +671,114 @@ class RunEvaluateScibTest(unittest.TestCase):
             categories = set(df["metric_category"].unique())
             self.assertIn("bio_conservation_metrics", categories)
             self.assertIn("batch_correction_metrics", categories)
+
+
+class TrajectoryMetricsTest(unittest.TestCase):
+    def test_trajectory_rows_include_observed_and_null_summary(self) -> None:
+        from scfm_controlled_manipulations.evaluation.metrics_trajectory import (
+            compute_trajectory_reference_rows,
+        )
+
+        n_cells = 30
+        trajectory = np.repeat(np.arange(3), 10)
+        obs = pd.DataFrame({"trajectory": trajectory}, index=[f"cell_{i}" for i in range(n_cells)])
+        emb = np.column_stack(
+            [
+                np.linspace(0.0, 1.0, n_cells),
+                np.zeros(n_cells),
+            ]
+        ).astype(np.float32)
+
+        rows = compute_trajectory_reference_rows(
+            mat=emb,
+            obs_df=obs,
+            trajectory_key="trajectory",
+            dataset_id="toy",
+            model="pca",
+            intervention_id="reference",
+            intervention_name="reference",
+            space_label="embedding_reference",
+            seed=0,
+            n_neighbors=5,
+            n_dcs=3,
+            n_permutations=2,
+        )
+
+        df = pd.DataFrame(rows)
+        self.assertEqual(
+            set(df["metric_name"]), {"ordering_correlation_spearman", "frac_connected"}
+        )
+        score = df[df["metric_name"] == "ordering_correlation_spearman"].iloc[0]
+        self.assertTrue(np.isfinite(score["value_mean"]))
+        self.assertTrue(np.isfinite(score["null_mean"]))
+        self.assertTrue(np.isfinite(score["null_z"]))
+        self.assertTrue(np.isfinite(score["null_p_value"]))
+        self.assertEqual(score["metric_category"], "trajectory_metrics")
+        self.assertEqual(score["space"], "embedding_reference")
+
+
+class RunEvaluateTrajectoryTest(unittest.TestCase):
+    def test_run_evaluate_trajectory_writes_separate_csv(self) -> None:
+        import sys
+
+        root = Path(__file__).resolve().parents[1]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+        from scripts.benchmark_eval import setup_fixture
+
+        from scfm_controlled_manipulations.evaluation.run_trajectory import run_evaluate_trajectory
+        from scfm_controlled_manipulations.io import evaluation_trajectory_metrics_csv_path
+
+        config_path = root / "configs" / "experiments" / "atlases.yaml"
+        if not config_path.exists():
+            config_path = root / "configs" / "default.yaml"
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture_root = Path(tmp)
+            run_cfg = setup_fixture(
+                fixture_root,
+                n_cells=60,
+                n_genes=120,
+                emb_dim=4,
+                n_cell_types=3,
+                n_batches=2,
+                config_path=config_path,
+                models=["pca"],
+                max_interventions=1,
+            )
+            run_cfg["evaluation"]["trajectory_n_neighbors"] = 5
+            run_cfg["evaluation"]["trajectory_n_dcs"] = 3
+            run_cfg["evaluation"]["trajectory_n_permutations"] = 2
+
+            ref_path = Path(run_cfg["results_dir"]) / "manipulations" / "reference.h5ad"
+            ad_ref = ad.read_h5ad(ref_path)
+            trajectory = np.repeat(np.arange(3), ad_ref.n_obs // 3)
+            if trajectory.size < ad_ref.n_obs:
+                trajectory = np.concatenate(
+                    [trajectory, np.full(ad_ref.n_obs - trajectory.size, trajectory[-1])]
+                )
+            ad_ref.obs["trajectory"] = trajectory
+            ad_ref.write_h5ad(ref_path)
+
+            emb_path = embedding_path(run_cfg["embeddings_root"], "pca", "reference")
+            ad_emb = ad.read_h5ad(emb_path)
+            ad_emb.X = np.column_stack(
+                [
+                    np.linspace(0.0, 1.0, ad_emb.n_obs),
+                    np.zeros((ad_emb.n_obs, ad_emb.n_vars - 1)),
+                ]
+            ).astype(np.float32)
+            ad_emb.write_h5ad(emb_path)
+
+            run_evaluate_trajectory(run_cfg)
+            out_path = evaluation_trajectory_metrics_csv_path(run_cfg["results_dir"], "pca")
+            self.assertTrue(out_path.is_file())
+            df = pd.read_csv(out_path)
+            self.assertFalse(df.empty)
+            self.assertTrue((df["intervention_id"] == "reference").all())
+            self.assertTrue((df["space"] == "embedding_reference").all())
+            self.assertEqual(set(df["metric_category"].unique()), {"trajectory_metrics"})
+            self.assertIn("ordering_correlation_spearman", set(df["metric_name"]))
 
 
 if __name__ == "__main__":

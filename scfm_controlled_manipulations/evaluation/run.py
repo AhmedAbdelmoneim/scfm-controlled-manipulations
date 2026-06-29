@@ -58,6 +58,10 @@ DEFAULT_EVALUATION: dict[str, Any] = {
     "stats_shift_pairwise_max_pairs": 10_000,
     "scib_benchmark_n_jobs": 1,
     "distance_correlation_subsample_n": None,
+    "trajectory_key": "trajectory",
+    "trajectory_n_neighbors": 15,
+    "trajectory_n_dcs": 10,
+    "trajectory_n_permutations": 10,
 }
 
 
@@ -108,6 +112,16 @@ def validate_evaluation_config(ev: dict[str, Any]) -> dict[str, Any]:
     validated["stats_shift_pairwise_max_pairs"] = pairwise_max
 
     validated["scib_benchmark_n_jobs"] = max(1, int(validated.get("scib_benchmark_n_jobs", 1)))
+    trajectory_key = str(validated.get("trajectory_key", "trajectory")).strip()
+    if not trajectory_key:
+        raise ValueError("evaluation.trajectory_key must be a non-empty string")
+    validated["trajectory_key"] = trajectory_key
+    validated["trajectory_n_neighbors"] = max(1, int(validated.get("trajectory_n_neighbors", 15)))
+    validated["trajectory_n_dcs"] = max(1, int(validated.get("trajectory_n_dcs", 10)))
+    trajectory_n_permutations = int(validated.get("trajectory_n_permutations", 10))
+    if trajectory_n_permutations < 0:
+        raise ValueError("evaluation.trajectory_n_permutations must be >= 0")
+    validated["trajectory_n_permutations"] = trajectory_n_permutations
     dist_corr_sub = validated.get("distance_correlation_subsample_n")
     if dist_corr_sub is None:
         validated["distance_correlation_subsample_n"] = validated[
@@ -319,6 +333,16 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
 
         if n_planned == 0:
             logger.warning("No interventions to evaluate for model %s; skipping", model)
+            continue
+
+        ref_embedding_path = embedding_path(embeddings_root, model, ref_id)
+        if not ref_embedding_path.is_file():
+            logger.warning(
+                "Reference embedding missing for model %s; skipping model for dataset %s: %s",
+                model,
+                dataset_id,
+                ref_embedding_path,
+            )
             continue
 
         logger.info("Preparing shared reference context for model %s", model)

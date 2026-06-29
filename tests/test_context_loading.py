@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
 
 import anndata as ad
 import numpy as np
@@ -53,6 +53,16 @@ class ContextLoadingTest(unittest.TestCase):
         ad_emb_man.write_h5ad(emb_root / "pca_downsample_abc123.h5ad")
         return "downsample_abc123", obs_names
 
+    def _write_subset_fixture(self, root: Path) -> tuple[str, list[str]]:
+        iid, obs_names = self._write_fixture(root)
+        rng = np.random.default_rng(1)
+        subset_obs = obs_names[:-1]
+        subset_order = list(reversed(subset_obs))
+        ad_emb_man = ad.AnnData(X=rng.standard_normal((7, 3)).astype(np.float32))
+        ad_emb_man.obs_names = subset_order
+        ad_emb_man.write_h5ad(root / "embeddings" / "pca" / "pca_downsample_abc123.h5ad")
+        return iid, subset_obs
+
     def test_dense_embedding_aligned_to_obs_reorders(self) -> None:
         adata = ad.AnnData(
             X=np.arange(6, dtype=np.float32).reshape(3, 2),
@@ -87,6 +97,30 @@ class ContextLoadingTest(unittest.TestCase):
                 embedding_path(root / "embeddings", "pca", iid).name,
                 "pca_downsample_abc123.h5ad",
             )
+
+    def test_load_intervention_bundle_uses_shared_cell_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            iid, subset_obs_names = self._write_subset_fixture(root)
+            dataset_ctx = load_dataset_context(root / "results")
+            model_ctx = load_model_context(
+                root / "embeddings",
+                "pca",
+                "reference",
+                target_obs=dataset_ctx.obs.index,
+            )
+            bundle = load_intervention_bundle(
+                dataset_ctx=dataset_ctx,
+                model_ctx=model_ctx,
+                results_dir=root / "results",
+                embeddings_root=root / "embeddings",
+                model="pca",
+                intervention_id=iid,
+            )
+            self.assertEqual(bundle.emb_ref.shape, (7, 3))
+            self.assertEqual(bundle.emb_man.shape, (7, 3))
+            self.assertFalse(bundle.uses_full_reference)
+            self.assertEqual(bundle.obs.index.tolist(), subset_obs_names)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,7 @@ def evaluate_intervention(
     )
 
     frames: list[pd.DataFrame] = []
+    ref_stats_cache = model_ctx.ref_stats_cache if bundle.uses_full_reference else None
 
     t0 = time.perf_counter()
     frames.append(
@@ -88,7 +89,7 @@ def evaluate_intervention(
             intervention_id=iid,
             intervention_name=name,
             seed=seed,
-            ref_cache=model_ctx.ref_stats_cache,
+            ref_cache=ref_stats_cache,
         )
     )
     logger.info(
@@ -108,7 +109,7 @@ def evaluate_intervention(
             intervention_id=iid,
             intervention_name=name,
             seed=seed,
-            ref_cache=model_ctx.ref_stats_cache,
+            ref_cache=ref_stats_cache,
             pairwise_max_pairs=stats_shift_pairwise_max_pairs,
             distance_correlation_subsample_n=distance_correlation_subsample_n,
             distance_metrics=distance_metrics,

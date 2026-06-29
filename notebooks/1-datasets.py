@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.9"
 app = marimo.App()
 
 
@@ -14,20 +14,48 @@ def _(mo):
 
 @app.cell
 def _():
+    import gzip
+    import shutil
+    import tempfile
+    import zipfile
     from pathlib import Path
     import re
 
+    import anndata as ad
     import marimo as mo
     import mygene
     import numpy as np
     import pandas as pd
     import scanpy as sc
+    import scipy.io as sio
     import scipy.sparse as sp
 
     DATA_DIR = Path("/vault/amoneim/scfm-controlled-manipulations/raw_datasets")
-    OUTPUT_DIR = Path("/vault/amoneim/scfm-controlled-manipulations/raw_datasets_normalized")
-    ENSEMBL_MAPPING_CACHE = OUTPUT_DIR / "gene_symbol_to_human_ensembl.csv"
-    return DATA_DIR, ENSEMBL_MAPPING_CACHE, OUTPUT_DIR, mo, mygene, np, pd, re, sc, sp
+    PROJECT_DIR = Path("/home/amoneim/scfm-controlled-manipulations")
+    CURATED_DATASETS_PATH = PROJECT_DIR / "data" / "test-datasets.csv"
+    PREPROCESSED_DIR = Path("/vault/amoneim/scfm-controlled-manipulations/2-preprocessed_datasets")
+    DOWNSAMPLED_DIR = Path("/vault/amoneim/scfm-controlled-manipulations/3-downsampled-datasets")
+    ENSEMBL_MAPPING_CACHE = PREPROCESSED_DIR / "gene_symbol_to_human_ensembl.csv"
+    return (
+        CURATED_DATASETS_PATH,
+        DATA_DIR,
+        DOWNSAMPLED_DIR,
+        ENSEMBL_MAPPING_CACHE,
+        PREPROCESSED_DIR,
+        ad,
+        gzip,
+        mo,
+        mygene,
+        np,
+        pd,
+        re,
+        sc,
+        shutil,
+        sio,
+        sp,
+        tempfile,
+        zipfile,
+    )
 
 
 @app.cell(hide_code=True)
@@ -39,42 +67,256 @@ def _(mo):
 
 
 @app.cell
-def _(DATA_DIR, pd, sc):
-    def load_h5ads(dataset_dir, recursive=False):
+def _(
+    CURATED_DATASETS_PATH,
+    DATA_DIR,
+    ad,
+    gzip,
+    np,
+    pd,
+    sc,
+    shutil,
+    sio,
+    sp,
+    tempfile,
+    zipfile,
+):
+    def load_h5ads(dataset_dir, recursive=False, exclude_parts=()):
         paths = dataset_dir.rglob("*.h5ad") if recursive else dataset_dir.glob("*.h5ad")
         return {
             path.relative_to(dataset_dir).with_suffix("").as_posix().replace("/", "__"): sc.read_h5ad(path, backed="r")
             for path in sorted(paths)
             if "_downloads" not in path.parts
+            and not any(part in path.parts for part in exclude_parts)
+        }
+
+    TRAJECTORY_DIR = DATA_DIR / "trajectory_benchmark"
+    TRAJECTORY_MIN_GENES_PER_CELL = 200
+    TRAJECTORY_MIN_CELLS_PER_GENE = 3
+
+    def make_unique_index(values):
+        counts = {}
+        unique = []
+        for value in map(str, values):
+            count = counts.get(value, 0)
+            unique.append(value if count == 0 else f"{value}-{count}")
+            counts[value] = count + 1
+        return pd.Index(unique)
+
+    def apply_trajectory_minimal_qc(adata):
+        filtered = adata.copy()
+        sc.pp.filter_cells(filtered, min_genes=TRAJECTORY_MIN_GENES_PER_CELL)
+        sc.pp.filter_genes(filtered, min_cells=TRAJECTORY_MIN_CELLS_PER_GENE)
+        filtered.uns["trajectory_benchmark_minimal_qc"] = {
+            "min_genes_per_cell": TRAJECTORY_MIN_GENES_PER_CELL,
+            "min_cells_per_gene": TRAJECTORY_MIN_CELLS_PER_GENE,
+        }
+        return filtered
+
+    def read_gene_by_cell_csv_gz(path, chunksize=512):
+        with gzip.open(path, "rt") as handle:
+            cell_names = handle.readline().rstrip("\n").split(",")[1:]
+
+        gene_names = []
+        chunks = []
+        for chunk in pd.read_csv(path, index_col=0, chunksize=chunksize):
+            gene_names.extend(chunk.index.astype(str))
+            chunks.append(sp.csr_matrix(chunk.to_numpy(dtype=np.float32, copy=False)))
+
+        gene_by_cell = sp.vstack(chunks, format="csr")
+        return ad.AnnData(
+            X=gene_by_cell.T.tocsr(),
+            obs=pd.DataFrame(index=make_unique_index(cell_names)),
+            var=pd.DataFrame(index=make_unique_index(gene_names)),
+        )
+
+    def read_cell_by_gene_tsv_gz(path, chunksize=512):
+        with gzip.open(path, "rt") as handle:
+            columns = handle.readline().lstrip("# ").rstrip("\n").split("\t")
+        cell_column = columns[0]
+        gene_names = columns[1:]
+
+        cell_names = []
+        chunks = []
+        for chunk in pd.read_csv(
+            path,
+            sep="\t",
+            names=columns,
+            skiprows=1,
+            chunksize=chunksize,
+        ):
+            cell_names.extend(chunk[cell_column].astype(str))
+            chunks.append(sp.csr_matrix(chunk.iloc[:, 1:].to_numpy(dtype=np.float32, copy=False)))
+
+        return ad.AnnData(
+            X=sp.vstack(chunks, format="csr"),
+            obs=pd.DataFrame(index=make_unique_index(cell_names)),
+            var=pd.DataFrame(index=make_unique_index(gene_names)),
+        )
+
+    def align_obs_metadata(adata, metadata, obs_key):
+        metadata = metadata.copy()
+        metadata[obs_key] = metadata[obs_key].astype(str)
+        metadata = metadata.set_index(obs_key)
+        shared = adata.obs_names.intersection(metadata.index)
+        aligned = adata[shared].copy()
+        aligned.obs = metadata.loc[aligned.obs_names].copy()
+        return aligned
+
+    def load_emt_trajectory():
+        dataset_dir = TRAJECTORY_DIR / "EMT_GSE147405"
+        adata = read_gene_by_cell_csv_gz(dataset_dir / "GSE147405_A549_TGFB1_TimeCourse_UMI_matrix.csv.gz")
+        metadata = pd.read_csv(dataset_dir / "GSE147405_A549_TGFB1_TimeCourse_metadata.csv.gz", index_col=0)
+        metadata.index = metadata.index.astype(str)
+        adata = adata[adata.obs_names.intersection(metadata.index)].copy()
+        adata.obs = metadata.loc[adata.obs_names].copy()
+        adata = adata[~adata.obs["Time"].astype(str).str.endswith("_rm")].copy()
+        adata.obs["timepoint"] = adata.obs["Time"].astype(str)
+        adata.obs["trajectory_stage"] = adata.obs["timepoint"].replace({"3d": "late", "7d": "late"})
+        adata.obs["cell_type"] = adata.obs["Cluster"].astype(str)
+        adata.obs["batch"] = adata.obs["Mix"].astype(str)
+        adata.var["gene_name"] = adata.var_names.astype(str)
+        adata.uns["source"] = "GSE147405_A549_TGFB1_TimeCourse"
+        return apply_trajectory_minimal_qc(adata)
+
+    def load_veres_trajectory():
+        dataset_dir = TRAJECTORY_DIR / "Veres_GSE114412"
+        adata = read_cell_by_gene_tsv_gz(dataset_dir / "GSE114412_Stage_5.all.processed_counts.tsv.gz")
+        metadata = pd.read_csv(
+            dataset_dir / "GSE114412_Stage_5.endocrine_pseudotime.cell_metadata.tsv.gz",
+            sep="\t",
+        )
+        adata = align_obs_metadata(adata, metadata, "library.barcode")
+        adata.obs["stage"] = "Stage 5"
+        adata.obs["timepoint"] = "Stage_5_day_" + adata.obs["CellDay"].astype(str)
+        adata.obs["cell_type"] = adata.obs["Assigned_cluster"].astype(str)
+        adata.obs["batch"] = adata.obs["Lib_prep_batch"].astype(str)
+        adata.var["gene_name"] = adata.var_names.astype(str)
+        adata.uns["source"] = "GSE114412_Stage_5_endocrine_pseudotime"
+        return apply_trajectory_minimal_qc(adata)
+
+    def read_10x_from_zip(zip_handle, sample, label):
+        prefix = f"scRNAseq/{sample}/"
+        matrix = sio.mmread(zip_handle.open(prefix + "matrix.mtx")).tocsr().T
+        genes = pd.read_csv(zip_handle.open(prefix + "genes.tsv"), sep="\t", header=None)
+        barcodes = pd.read_csv(zip_handle.open(prefix + "barcodes.tsv"), sep="\t", header=None)[0].astype(str)
+        obs = pd.DataFrame(index=make_unique_index([f"{sample}_{barcode}" for barcode in barcodes]))
+        obs["sample_id"] = sample
+        obs["timepoint"] = label
+        obs["batch"] = sample
+        var = pd.DataFrame(index=make_unique_index(genes[1].astype(str)))
+        var["ensembl_id"] = genes[0].astype(str).to_numpy()
+        var["gene_name"] = var.index.astype(str)
+        return ad.AnnData(X=matrix, obs=obs, var=var)
+
+    def filter_library_size_sequential_percentiles(adata, lower_percentile=20, upper_percentile=75):
+        totals = np.asarray(adata.X.sum(axis=1)).ravel()
+        lower_bound = np.percentile(totals, lower_percentile)
+        above_lower = totals > lower_bound
+        filtered = adata[above_lower].copy()
+
+        filtered_totals = np.asarray(filtered.X.sum(axis=1)).ravel()
+        upper_bound = np.percentile(filtered_totals, upper_percentile)
+        below_upper = filtered_totals < upper_bound
+        filtered = filtered[below_upper].copy()
+        filtered.uns["library_size_filter"] = {
+            "lower_percentile": lower_percentile,
+            "upper_percentile": upper_percentile,
+            "lower_bound": float(lower_bound),
+            "upper_bound_after_lower_filter": float(upper_bound),
+        }
+        return filtered
+
+    def load_ebdata_trajectory():
+        sample_labels = {
+            "T0_1A": "Day 00-03",
+            "T2_3B": "Day 06-09",
+            "T4_5C": "Day 12-15",
+            "T6_7D": "Day 18-21",
+            "T8_9E": "Day 24-27",
+        }
+        zip_path = TRAJECTORY_DIR / "EBdata_Mendeley_v6n743h5ng" / "scRNAseq.zip"
+        with zipfile.ZipFile(zip_path) as zip_handle:
+            datasets = [
+                filter_library_size_sequential_percentiles(read_10x_from_zip(zip_handle, sample, label))
+                for sample, label in sample_labels.items()
+            ]
+        combined = ad.concat(datasets, join="outer", merge="same", index_unique=None)
+        combined.uns["source"] = "Mendeley_10.17632_v6n743h5ng.1_scRNAseq"
+        return apply_trajectory_minimal_qc(combined)
+
+    def read_h5ad_gz(path):
+        with gzip.open(path, "rb") as source, tempfile.NamedTemporaryFile(suffix=".h5ad") as temporary:
+            shutil.copyfileobj(source, temporary)
+            temporary.flush()
+            return sc.read_h5ad(temporary.name)
+
+    def load_hspc_trajectory():
+        adata = read_h5ad_gz(
+            TRAJECTORY_DIR / "HSPC_GSE226824" / "GSE226824_HSPC-all_filtered.h5ad.gz"
+        )
+        adata.obs["timepoint"] = adata.obs["time"].astype(str)
+        adata.obs["cell_type"] = adata.obs["clusters"].astype(str)
+        adata.obs["batch"] = adata.obs["hashtags"].astype(str)
+        adata.var["gene_name"] = adata.var_names.astype(str)
+        adata.uns["source"] = "GSE226824_HSPC-all_filtered"
+        adata.uns["source_note"] = "GEO/paper metadata describe this accession as murine HSPCs."
+        return adata
+
+    def load_trajectory_benchmark():
+        if not TRAJECTORY_DIR.is_dir():
+            return {}
+        return {
+            "emt": load_emt_trajectory(),
+            "veres": load_veres_trajectory(),
+            "ebdata": load_ebdata_trajectory(),
+            "hspc_ifna": load_hspc_trajectory(),
         }
 
     ATLASES = load_h5ads(DATA_DIR / "atlases")
     SCEVAL = load_h5ads(DATA_DIR / "sceval")
-    SCFM_EVAL = load_h5ads(DATA_DIR / "scfm_eval", recursive=True)
+    HER2ST = load_h5ads(DATA_DIR / "scfm_eval" / "her2st")
+    SPATIALLIBD = load_h5ads(DATA_DIR / "scfm_eval" / "spatialLIBD")
+    SCFM_EVAL = load_h5ads(
+        DATA_DIR / "scfm_eval",
+        recursive=True,
+        exclude_parts=("her2st", "merfishhprd", "spatialLIBD"),
+    )
+    TRAJECTORY_BENCHMARK = load_trajectory_benchmark()
+    CURATED_DATASETS = pd.read_csv(CURATED_DATASETS_PATH)
+    for column in (
+        "Downsampled",
+        "Cell type task",
+        "Batch task",
+        "Trajectory task",
+        "Perturbation task",
+    ):
+        CURATED_DATASETS[column] = CURATED_DATASETS[column].astype(str).str.upper().eq("TRUE")
 
-    manifest_path = DATA_DIR / "scfm_eval" / "manifest.csv"
-    if manifest_path.is_file():
-        scfm_eval_manifest = pd.read_csv(manifest_path)
-        scfm_eval_manifest = scfm_eval_manifest[
-            scfm_eval_manifest["status"].isin(["downloaded", "converted"])
-        ].copy()
-        scfm_eval_manifest["dataset_name"] = (
-            scfm_eval_manifest["source"].astype(str)
-            + "__"
-            + scfm_eval_manifest["output_path"].map(
-                lambda value: str(value).rsplit("/", 1)[-1].removesuffix(".h5ad")
-            )
-        )
-        SCFM_EVAL_METADATA = scfm_eval_manifest.set_index("dataset_name").to_dict("index")
-    else:
-        SCFM_EVAL_METADATA = {}
-    return ATLASES, SCEVAL, SCFM_EVAL, SCFM_EVAL_METADATA
+
+
+    return (
+        ATLASES,
+        CURATED_DATASETS,
+        HER2ST,
+        SCEVAL,
+        SCFM_EVAL,
+        SPATIALLIBD,
+        TRAJECTORY_BENCHMARK,
+    )
 
 
 @app.cell
-def _(ATLASES, SCEVAL, SCFM_EVAL, pd):
-
-
+def _(
+    ATLASES,
+    CURATED_DATASETS,
+    HER2ST,
+    SCEVAL,
+    SCFM_EVAL,
+    SPATIALLIBD,
+    TRAJECTORY_BENCHMARK,
+    pd,
+):
     CELL_TYPE_COLUMNS = (
         "cell_type",
         "celltype",
@@ -85,6 +327,15 @@ def _(ATLASES, SCEVAL, SCFM_EVAL, pd):
         "cell_label",
         "cell_ontology_class",
         "cell_type_ontology_term_id",
+        "Assigned_cluster",
+        "Assigned_subcluster",
+        "Cluster",
+        "cluster",
+        "clusters",
+        "milestone_id",
+        "layer_guess_reordered_short",
+        "layer_guess_reordered",
+        "layer_guess",
     )
     BATCH_COLUMNS = (
         "batch",
@@ -108,11 +359,40 @@ def _(ATLASES, SCEVAL, SCFM_EVAL, pd):
                 return normalized[candidate.lower()]
         return None
 
-    def summarize_dataset(name, adata):
+    DATASET_GROUPS = {
+        "atlases": ATLASES,
+        "sceval": SCEVAL,
+        "scfm_eval": SCFM_EVAL,
+        "her2st": HER2ST,
+        "spatialLIBD": SPATIALLIBD,
+        "trajectory_benchmark": TRAJECTORY_BENCHMARK,
+    }
+
+    def find_dataset(dataset_name):
+        matches = [
+            (dataset_group, datasets[dataset_name])
+            for dataset_group, datasets in DATASET_GROUPS.items()
+            if dataset_name in datasets
+        ]
+        if len(matches) != 1:
+            raise KeyError(f"{dataset_name} matched {len(matches)} dataset groups")
+        return matches[0]
+
+    def curated_dataset_items():
+        for row in CURATED_DATASETS.to_dict("records"):
+            dataset_name = row["Dataset Name"]
+            dataset_group, adata = find_dataset(dataset_name)
+            yield dataset_group, dataset_name, adata, row
+
+    def summarize_dataset(dataset_group, name, adata, metadata):
         cell_type_column = best_column(adata.obs, CELL_TYPE_COLUMNS)
         batch_column = best_column(adata.obs, BATCH_COLUMNS)
         return {
+            "dataset_group": dataset_group,
             "dataset_name": name,
+            "cell_type_task": metadata["Cell type task"],
+            "batch_task": metadata["Batch task"],
+            "trajectory_task": metadata["Trajectory task"],
             "cell_type_column": cell_type_column or "",
             "batch_column": batch_column or "",
             "n_cells": adata.n_obs,
@@ -122,15 +402,110 @@ def _(ATLASES, SCEVAL, SCFM_EVAL, pd):
             "n_batches": adata.obs[batch_column].nunique(dropna=True) if batch_column else pd.NA,
         }
 
+    missing_curated_datasets = [
+        dataset_name
+        for dataset_name in CURATED_DATASETS["Dataset Name"]
+        if not any(dataset_name in datasets for datasets in DATASET_GROUPS.values())
+    ]
+    if missing_curated_datasets:
+        raise KeyError(f"Curated datasets missing from loaded groups: {missing_curated_datasets}")
+
     dataset_summary = pd.DataFrame(
         [
-            summarize_dataset(name, adata)
-            for datasets in (ATLASES, SCEVAL, SCFM_EVAL)
-            for name, adata in datasets.items()
+            summarize_dataset(dataset_group, name, adata, metadata)
+            for dataset_group, name, adata, metadata in curated_dataset_items()
         ]
     )
     dataset_summary
-    return BATCH_COLUMNS, CELL_TYPE_COLUMNS, best_column
+    return BATCH_COLUMNS, CELL_TYPE_COLUMNS, best_column, curated_dataset_items
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Trajectory inference dataset cleanups
+    """)
+    return
+
+
+@app.cell
+def _(TRAJECTORY_BENCHMARK, curated_dataset_items, pd):
+    TRAJECTORY_SOURCE_COLUMNS = {
+        "emt": "trajectory_stage",
+        "veres": "timepoint",
+        "ebdata": "timepoint",
+        "hspc_ifna": "timepoint",
+    }
+
+    TRAJECTORY_VALUE_ORDERS = {
+        "emt": ["0d", "8h", "1d", "late"],
+        "veres": [f"Stage_5_day_{day}" for day in range(8)],
+        "ebdata": ["Day 00-03", "Day 06-09", "Day 12-15", "Day 18-21", "Day 24-27"],
+        "hspc_ifna": ["control", "3h", "24h", "72h"],
+    }
+
+    def set_trajectory_columns(dataset_name, adata, source_column, ordered_values):
+        value_to_index = {value: index for index, value in enumerate(ordered_values)}
+
+        labels = adata.obs[source_column].astype(str)
+        observed_values = set(labels.dropna().unique())
+        unexpected_values = sorted(observed_values - set(ordered_values))
+        if unexpected_values:
+            raise ValueError(
+                f"{dataset_name} has unexpected {source_column} values: {unexpected_values}"
+            )
+
+        adata.obs["trajectory_label"] = pd.Categorical(
+            labels,
+            categories=ordered_values,
+            ordered=True,
+        )
+        adata.obs["trajectory"] = labels.map(value_to_index).astype(int)
+        adata.uns["trajectory_cleanup"] = {
+            "source_column": source_column,
+            "label_column": "trajectory_label",
+            "numeric_column": "trajectory",
+            "value_order": ordered_values,
+            "value_to_index": value_to_index,
+        }
+
+    def clean_trajectory_benchmark(dataset_name, adata):
+        set_trajectory_columns(
+            dataset_name,
+            adata,
+            TRAJECTORY_SOURCE_COLUMNS[dataset_name],
+            TRAJECTORY_VALUE_ORDERS[dataset_name],
+        )
+
+    def clean_dynverse_trajectory(dataset_name, adata):
+        if "milestone_id" not in adata.obs.columns:
+            raise KeyError(f"{dataset_name} is missing dynverse ground-truth milestone_id")
+        ordered_values = list(pd.unique(adata.obs["milestone_id"].astype(str)))
+        set_trajectory_columns(dataset_name, adata, "milestone_id", ordered_values)
+
+    for dataset_name, adata in TRAJECTORY_BENCHMARK.items():
+        clean_trajectory_benchmark(dataset_name, adata)
+
+    for dataset_group, dataset_name, adata, metadata in curated_dataset_items():
+        if metadata["Trajectory task"] and dataset_group == "scfm_eval" and dataset_name.startswith("dynverse__"):
+            clean_dynverse_trajectory(dataset_name, adata)
+
+    trajectory_cleanup_summary = pd.DataFrame(
+        [
+            {
+                "dataset_name": dataset_name,
+                "source_column": adata.uns["trajectory_cleanup"]["source_column"],
+                "trajectory_label": label,
+                "trajectory": index,
+                "n_cells": int((adata.obs["trajectory"] == index).sum()),
+            }
+            for _, dataset_name, adata, metadata in curated_dataset_items()
+            if metadata["Trajectory task"] and "trajectory_cleanup" in adata.uns
+            for index, label in enumerate(adata.uns["trajectory_cleanup"]["value_order"])
+        ]
+    )
+    trajectory_cleanup_summary
+    return
 
 
 @app.cell(hide_code=True)
@@ -143,17 +518,16 @@ def _(mo):
 
 @app.cell
 def _(
-    ATLASES,
     BATCH_COLUMNS,
     CELL_TYPE_COLUMNS,
-    SCEVAL,
-    SCFM_EVAL,
     best_column,
+    curated_dataset_items,
     pd,
 ):
-    def normalize_obs_columns(dataset_group, datasets):
+    def normalize_obs_columns():
         rows = []
-        for name, adata in datasets.items():
+        errors = []
+        for dataset_group, name, adata, metadata in curated_dataset_items():
             cell_type_source = best_column(adata.obs, CELL_TYPE_COLUMNS)
             batch_source = best_column(adata.obs, BATCH_COLUMNS)
 
@@ -162,23 +536,28 @@ def _(
             if batch_source is not None:
                 adata.obs["batch"] = adata.obs[batch_source]
 
+            if metadata["Cell type task"] and "cell_type" not in adata.obs.columns:
+                errors.append(f"{name} has Cell type task=True but no cell_type source column")
+            if metadata["Batch task"] and "batch" not in adata.obs.columns:
+                errors.append(f"{name} has Batch task=True but no batch source column")
+
             rows.append(
                 {
                     "dataset_group": dataset_group,
                     "dataset_name": name,
+                    "cell_type_task": metadata["Cell type task"],
+                    "batch_task": metadata["Batch task"],
                     "cell_type_source": cell_type_source or "",
                     "batch_source": batch_source or "",
                     "has_cell_type": "cell_type" in adata.obs.columns,
                     "has_batch": "batch" in adata.obs.columns,
                 }
             )
+        if errors:
+            raise ValueError("; ".join(errors))
         return rows
 
-    normalization_summary = pd.DataFrame(
-        normalize_obs_columns("atlases", ATLASES)
-        + normalize_obs_columns("sceval", SCEVAL)
-        + normalize_obs_columns("scfm_eval", SCFM_EVAL)
-    )
+    normalization_summary = pd.DataFrame(normalize_obs_columns())
     normalization_summary
     return
 
@@ -192,7 +571,7 @@ def _(mo):
 
 
 @app.cell
-def _(ATLASES, SCEVAL, SCFM_EVAL, best_column, pd):
+def _(best_column, curated_dataset_items, pd):
     BIOTYPE_COLUMNS = (
         "feature_type",
         "feature_biotype",
@@ -236,9 +615,9 @@ def _(ATLASES, SCEVAL, SCFM_EVAL, best_column, pd):
             "filter_applied": True,
         }
 
-    def summarize_gene_filtering_plan(dataset_group, datasets):
+    def summarize_gene_filtering_plan():
         rows = []
-        for name, adata in datasets.items():
+        for dataset_group, name, adata, _ in curated_dataset_items():
             info = protein_coding_filter_info(adata)
             rows.append(
                 {
@@ -253,11 +632,7 @@ def _(ATLASES, SCEVAL, SCFM_EVAL, best_column, pd):
             )
         return rows
 
-    gene_filtering_plan = pd.DataFrame(
-        summarize_gene_filtering_plan("atlases", ATLASES)
-        + summarize_gene_filtering_plan("sceval", SCEVAL)
-        + summarize_gene_filtering_plan("scfm_eval", SCFM_EVAL)
-    )
+    gene_filtering_plan = pd.DataFrame(summarize_gene_filtering_plan())
     gene_filtering_plan
     return TARGET_BIOTYPE, protein_coding_filter_info
 
@@ -272,14 +647,12 @@ def _(mo):
 
 @app.cell
 def _(
-    ATLASES,
     BATCH_COLUMNS,
     CELL_TYPE_COLUMNS,
     ENSEMBL_MAPPING_CACHE,
-    SCEVAL,
-    SCFM_EVAL,
     TARGET_BIOTYPE,
     best_column,
+    curated_dataset_items,
     mygene,
     np,
     pd,
@@ -552,6 +925,9 @@ def _(
                 n_genes_after_ensembl_filter = len(gene_names)
         cell_type_source = best_column(normalized.obs, CELL_TYPE_COLUMNS)
         batch_source = best_column(normalized.obs, BATCH_COLUMNS)
+        requires_cell_type = bool(dataset_metadata.get("Cell type task")) if dataset_metadata else False
+        requires_batch = bool(dataset_metadata.get("Batch task")) if dataset_metadata else False
+        requires_trajectory = bool(dataset_metadata.get("Trajectory task")) if dataset_metadata else False
 
         normalized.X = count_matrix
         normalized.raw = None
@@ -568,6 +944,15 @@ def _(
             normalized.obs["cell_type"] = normalized.obs[cell_type_source]
         if batch_source is not None:
             normalized.obs["batch"] = normalized.obs[batch_source]
+        if requires_cell_type and "cell_type" not in normalized.obs.columns:
+            raise ValueError(f"{dataset_name} requires cell_type but no source column was found")
+        if requires_batch and "batch" not in normalized.obs.columns:
+            raise ValueError(f"{dataset_name} requires batch but no source column was found")
+        if requires_trajectory:
+            if "trajectory" not in normalized.obs.columns or "trajectory_label" not in normalized.obs.columns:
+                raise ValueError(f"{dataset_name} requires trajectory but trajectory columns were not normalized")
+            normalized.obs["trajectory"] = normalized.obs["trajectory"].astype(int)
+            normalized.obs["trajectory_label"] = normalized.obs["trajectory_label"].astype(str)
 
         if dataset_metadata:
             metadata = {
@@ -601,6 +986,9 @@ def _(
             "ensembl_id_source": ensembl_id_source,
             "cell_type_source": cell_type_source or "",
             "batch_source": batch_source or "",
+            "requires_cell_type": requires_cell_type,
+            "requires_batch": requires_batch,
+            "requires_trajectory": requires_trajectory,
             "round_counts": rounding_decision["round_counts"],
             "rounding_reason": rounding_decision["reason"],
             "integer_like_fraction": rounding_decision["integer_like_fraction"],
@@ -622,9 +1010,9 @@ def _(
             for name in selected_names
         }
 
-    def summarize_embedding_normalization_plan(dataset_group, datasets):
+    def summarize_embedding_normalization_plan():
         rows = []
-        for name, adata in datasets.items():
+        for dataset_group, name, adata, metadata in curated_dataset_items():
             filter_info = protein_coding_filter_info(adata)
             count_matrix, _ = count_matrix_for_embedding(adata)
             if filter_info["filter_applied"]:
@@ -649,6 +1037,12 @@ def _(
                     "will_clear_raw": adata.raw is not None,
                     "will_clear_layers": bool(adata.layers),
                     "will_round_counts": rounding_decision["round_counts"],
+                    "requires_cell_type": metadata["Cell type task"],
+                    "has_cell_type": "cell_type" in adata.obs.columns,
+                    "requires_batch": metadata["Batch task"],
+                    "has_batch": "batch" in adata.obs.columns,
+                    "requires_trajectory": metadata["Trajectory task"],
+                    "has_trajectory": "trajectory" in adata.obs.columns and "trajectory_label" in adata.obs.columns,
                     "rounding_reason": rounding_decision["reason"],
                     "integer_like_fraction": rounding_decision["integer_like_fraction"],
                     "fractional_positive_fraction": rounding_decision[
@@ -658,11 +1052,7 @@ def _(
             )
         return rows
 
-    embedding_input_normalization_plan = pd.DataFrame(
-        summarize_embedding_normalization_plan("atlases", ATLASES)
-        + summarize_embedding_normalization_plan("sceval", SCEVAL)
-        + summarize_embedding_normalization_plan("scfm_eval", SCFM_EVAL)
-    )
+    embedding_input_normalization_plan = pd.DataFrame(summarize_embedding_normalization_plan())
     embedding_input_normalization_plan
     return (normalize_for_embedding,)
 
@@ -676,29 +1066,19 @@ def _(mo):
 
 
 @app.cell
-def _(
-    ATLASES,
-    OUTPUT_DIR,
-    SCEVAL,
-    SCFM_EVAL,
-    SCFM_EVAL_METADATA,
-    normalize_for_embedding,
-    pd,
-):
-    OVERWRITE_OUTPUTS = False
+def _(PREPROCESSED_DIR, curated_dataset_items, normalize_for_embedding, pd):
+    OVERWRITE_PREPROCESSED = False
 
-    def save_normalized_group(dataset_group, datasets):
-        output_dir = OUTPUT_DIR / dataset_group
-        output_dir.mkdir(parents=True, exist_ok=True)
-
+    def save_preprocessed_datasets(overwrite=OVERWRITE_PREPROCESSED):
+        PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
         rows = []
-        for name, adata in datasets.items():
-            output_path = output_dir / f"{name}.h5ad"
-            if output_path.exists() and not OVERWRITE_OUTPUTS:
+        for dataset_group, dataset_name, adata, metadata in curated_dataset_items():
+            output_path = PREPROCESSED_DIR / f"{dataset_name}.h5ad"
+            if output_path.exists() and not overwrite:
                 rows.append(
                     {
                         "dataset_group": dataset_group,
-                        "dataset_name": name,
+                        "dataset_name": dataset_name,
                         "output_path": str(output_path),
                         "status": "skipped_exists",
                     }
@@ -708,26 +1088,102 @@ def _(
             normalized = normalize_for_embedding(
                 adata,
                 dataset_group=dataset_group,
-                dataset_name=name,
-                dataset_metadata=SCFM_EVAL_METADATA.get(name),
+                dataset_name=dataset_name,
+                dataset_metadata=metadata,
             )
             normalized.write_h5ad(output_path, compression="gzip")
             rows.append(
                 {
                     "dataset_group": dataset_group,
-                    "dataset_name": name,
+                    "dataset_name": dataset_name,
                     "output_path": str(output_path),
                     "status": "written",
+                    "n_obs": normalized.n_obs,
+                    "n_vars": normalized.n_vars,
                 }
             )
-        return rows
+        summary = pd.DataFrame(rows)
+        summary.to_csv(PREPROCESSED_DIR / "manifest.csv", index=False)
+        return summary
 
-    save_summary = pd.DataFrame(
-        save_normalized_group("atlases", ATLASES)
-        + save_normalized_group("sceval", SCEVAL)
-        + save_normalized_group("scfm_eval", SCFM_EVAL)
-    )
-    save_summary
+    preprocessed_save_summary = save_preprocessed_datasets()
+    preprocessed_save_summary
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Save downsampled datasets
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(DOWNSAMPLED_DIR, PREPROCESSED_DIR, curated_dataset_items, pd, sc):
+    OVERWRITE_DOWNSAMPLED = False
+    DOWNSAMPLE_TARGET_CELLS = 5_000
+    DOWNSAMPLE_RANDOM_SEED = 0
+
+    def save_downsampled_datasets(overwrite=OVERWRITE_DOWNSAMPLED):
+        DOWNSAMPLED_DIR.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for dataset_group, dataset_name, _, metadata in curated_dataset_items():
+            input_path = PREPROCESSED_DIR / f"{dataset_name}.h5ad"
+            output_path = DOWNSAMPLED_DIR / f"{dataset_name}.h5ad"
+            if output_path.exists() and not overwrite:
+                rows.append(
+                    {
+                        "dataset_group": dataset_group,
+                        "dataset_name": dataset_name,
+                        "input_path": str(input_path),
+                        "output_path": str(output_path),
+                        "status": "skipped_exists",
+                    }
+                )
+                continue
+            if not input_path.is_file():
+                raise FileNotFoundError(f"Missing preprocessed dataset: {input_path}")
+
+            adata = sc.read_h5ad(input_path)
+            n_obs_before = adata.n_obs
+            target_n_obs = min(DOWNSAMPLE_TARGET_CELLS, n_obs_before)
+            if n_obs_before > target_n_obs:
+                sc.pp.subsample(
+                    adata,
+                    n_obs=target_n_obs,
+                    random_state=DOWNSAMPLE_RANDOM_SEED,
+                    copy=False,
+                )
+                status = "downsampled"
+            else:
+                status = "copied"
+            adata.uns["downsampling"] = {
+                "target_n_obs": DOWNSAMPLE_TARGET_CELLS,
+                "random_seed": DOWNSAMPLE_RANDOM_SEED,
+                "n_obs_before": n_obs_before,
+                "n_obs_after": adata.n_obs,
+                "curated_downsampled": bool(metadata["Downsampled"]),
+            }
+            adata.write_h5ad(output_path, compression="gzip")
+            rows.append(
+                {
+                    "dataset_group": dataset_group,
+                    "dataset_name": dataset_name,
+                    "input_path": str(input_path),
+                    "output_path": str(output_path),
+                    "status": status,
+                    "n_obs_before": n_obs_before,
+                    "n_obs_after": adata.n_obs,
+                    "curated_downsampled": bool(metadata["Downsampled"]),
+                }
+            )
+        summary = pd.DataFrame(rows)
+        summary.to_csv(DOWNSAMPLED_DIR / "manifest.csv", index=False)
+        return summary
+
+    downsampled_save_summary = save_downsampled_datasets()
+    downsampled_save_summary
     return
 
 

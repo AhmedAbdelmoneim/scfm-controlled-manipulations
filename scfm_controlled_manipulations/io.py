@@ -65,6 +65,11 @@ def evaluation_scib_metrics_csv_path(results_dir: str | Path, model: str) -> Pat
     return evaluation_dir(results_dir) / f"{model}_scib_metrics.csv"
 
 
+def evaluation_trajectory_metrics_csv_path(results_dir: str | Path, model: str) -> Path:
+    """Per-model trajectory inference metrics CSV under ``evaluation_dir``."""
+    return evaluation_dir(results_dir) / f"{model}_trajectory_metrics.csv"
+
+
 def evaluation_cache_dir(results_dir: str | Path) -> Path:
     """On-disk cache for expensive reference-side evaluation artifacts."""
     return Path(results_dir) / "evaluation_cache"

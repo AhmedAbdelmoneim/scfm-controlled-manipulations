@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,12 +17,15 @@ import pandas as pd
 
 from scfm_controlled_manipulations.evaluation.data import (
     AlignedBundle,
-    assert_obs_same_set,
+    common_obs_alignment,
     dense_embedding_aligned_to_obs,
+    obs_position_indexer,
     read_h5ad_for_eval,
 )
 from scfm_controlled_manipulations.evaluation.leiden_cache import LeidenCache
 from scfm_controlled_manipulations.io import embedding_path, manipulations_dir
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,11 +83,35 @@ def load_intervention_bundle(
     ad_emb_man = read_h5ad_for_eval(embedding_path(embeddings_root, model, intervention_id))
 
     target_obs = dataset_ctx.obs.index
-    assert_obs_same_set(target_obs, ad_emb_man.obs_names, "emb_ref", "emb_man")
-    emb_man = dense_embedding_aligned_to_obs(ad_emb_man, target_obs, label="emb_man")
+    alignment = common_obs_alignment(
+        target_obs,
+        ad_emb_man.obs_names,
+        reference_label="emb_ref",
+        candidate_label="emb_man",
+    )
+    if not alignment.is_full_reference:
+        logger.warning(
+            "Using shared cell subset for %s/%s: reference=%d embedding=%d shared=%d "
+            "missing_in_embedding=%d extra_in_embedding=%d",
+            model,
+            intervention_id,
+            len(alignment.reference_obs),
+            len(alignment.candidate_obs),
+            len(alignment.shared_obs),
+            len(alignment.missing_in_candidate),
+            len(alignment.extra_in_candidate),
+        )
+
+    ref_indexer = obs_position_indexer(target_obs, alignment.shared_obs)
+    emb_ref = model_ctx.emb_ref[ref_indexer]
+    emb_man = dense_embedding_aligned_to_obs(
+        ad_emb_man, alignment.shared_obs, label="emb_man"
+    )
+    obs = dataset_ctx.obs.loc[alignment.shared_obs].copy()
 
     return AlignedBundle(
-        emb_ref=model_ctx.emb_ref,
+        emb_ref=emb_ref,
         emb_man=emb_man,
-        obs=dataset_ctx.obs,
+        obs=obs,
+        uses_full_reference=alignment.is_full_reference,
     )

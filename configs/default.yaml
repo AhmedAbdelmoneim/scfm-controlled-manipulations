@@ -17,22 +17,22 @@ ensembl_id_column: ensembl_id
 hvg_n_top_genes: 2000
 
 interventions:
-  - name: gene_shuffle
-    kwargs:
-      variant: [random, chromosome, chromosome_control]
+  # - name: gene_shuffle
+  #   kwargs:
+  #     variant: [random, chromosome, chromosome_control]
   - name: local_smoothing
     kwargs:
       k: [5, 10, 20, 50, 100]
       n_pcs: 50
   - name: downsample
     kwargs:
-      fraction: [0.2, 0.4, 0.6, 0.8, 0.9, 0.95]
+      fraction: [0.4, 0.6, 0.8, 0.9, 0.95]
   - name: gene_dropout
     kwargs:
-      dropout_rate: [0.1, 0.2, 0.4, 0.6, 0.9]
+      dropout_rate: [0.1, 0.2, 0.4, 0.6]
   - name: poisson_resampling
     kwargs:
-      iterations: [1, 2, 3, 4, 5]
+      iterations: [1, 2, 3, 4]
 
 # Embeddings: embeddings_root/{model}/{model}_{intervention_id}.h5ad (see io.embedding_path).
 reference_intervention_id: reference
@@ -41,6 +41,7 @@ models: [pca, scgpt, geneformer, scfoundation, scimilarity, scconcept]
 
 # Structure evaluation (``make evaluate``): paired embedding vs reference per manipulation.
 # scIB bio/batch metrics are separate: ``make evaluate-scib`` (reference embedding only).
+# Trajectory inference metrics are separate: ``make evaluate-trajectory`` (reference embedding only).
 evaluation:
   k_values: [5, 15, 50]
   distance_metrics: [euclidean]
@@ -59,4 +60,9 @@ evaluation:
   stats_shift_pairwise_max_pairs: 10000
   # Used by ``make evaluate-scib`` only (not ``make evaluate``).
   scib_benchmark_n_jobs: 1
+  # Used by ``make evaluate-trajectory`` only (not ``make evaluate``).
+  trajectory_key: trajectory
+  trajectory_n_neighbors: 15
+  trajectory_n_dcs: 10
+  trajectory_n_permutations: 10
   distance_correlation_subsample_n: null

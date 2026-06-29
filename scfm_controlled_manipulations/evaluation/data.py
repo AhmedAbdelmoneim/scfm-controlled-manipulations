@@ -21,6 +21,22 @@ class AlignedBundle:
     emb_ref: np.ndarray
     emb_man: np.ndarray
     obs: pd.DataFrame
+    uses_full_reference: bool = True
+
+
+@dataclass(frozen=True)
+class ObsAlignment:
+    """Cell-id overlap diagnostics for aligning two AnnData-like obs indexes."""
+
+    reference_obs: pd.Index
+    candidate_obs: pd.Index
+    shared_obs: pd.Index
+    missing_in_candidate: pd.Index
+    extra_in_candidate: pd.Index
+
+    @property
+    def is_full_reference(self) -> bool:
+        return self.reference_obs.equals(self.shared_obs) and len(self.extra_in_candidate) == 0
 
 
 def assert_obs_aligned(
@@ -56,6 +72,56 @@ def assert_obs_same_set(
             f"obs_names differ between {label_a} and {label_b}: "
             f"missing_in_{label_b}={len(missing)} extra_in_{label_b}={len(extra)}"
         )
+
+
+def common_obs_alignment(
+    reference_obs: pd.Index | list[str],
+    candidate_obs: pd.Index | list[str],
+    *,
+    reference_label: str,
+    candidate_label: str,
+    allow_extra_candidate: bool = False,
+) -> ObsAlignment:
+    """Return shared cell IDs in reference order, with clear diagnostics for dropped cells."""
+    reference_index = pd.Index(reference_obs)
+    candidate_index = pd.Index(candidate_obs)
+    if not reference_index.is_unique:
+        raise ValueError(f"{reference_label} obs_names are not unique")
+    if not candidate_index.is_unique:
+        raise ValueError(f"{candidate_label} obs_names are not unique")
+
+    shared = reference_index.intersection(candidate_index, sort=False)
+    missing = reference_index.difference(candidate_index)
+    extra = candidate_index.difference(reference_index)
+    if len(shared) == 0:
+        raise ValueError(
+            f"obs_names have no overlap between {reference_label} and {candidate_label}: "
+            f"missing_in_{candidate_label}={len(missing)} extra_in_{candidate_label}={len(extra)}"
+        )
+    if len(extra) and not allow_extra_candidate:
+        raise ValueError(
+            f"obs_names contain unexpected cells in {candidate_label}: "
+            f"missing_in_{candidate_label}={len(missing)} extra_in_{candidate_label}={len(extra)}"
+        )
+
+    return ObsAlignment(
+        reference_obs=reference_index,
+        candidate_obs=candidate_index,
+        shared_obs=shared,
+        missing_in_candidate=missing,
+        extra_in_candidate=extra,
+    )
+
+
+def obs_position_indexer(source_obs: pd.Index | list[str], target_obs: pd.Index | list[str]) -> np.ndarray:
+    """Integer positions that order ``source_obs`` rows like ``target_obs``."""
+    source_index = pd.Index(source_obs)
+    target_index = pd.Index(target_obs)
+    indexer = source_index.get_indexer(target_index)
+    if np.any(indexer < 0):
+        missing = target_index[indexer < 0]
+        raise ValueError(f"target_obs contains {len(missing)} cells not present in source_obs")
+    return indexer
 
 
 def dense_embedding_aligned_to_obs(

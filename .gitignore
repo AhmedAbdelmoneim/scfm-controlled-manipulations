@@ -204,6 +204,4 @@ run_logs/
 
 # local-only scripts (batch helpers are tracked below)
 scripts/*
-!scripts/run_generated_evaluations.sh
-
 results/*

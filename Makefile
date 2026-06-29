@@ -79,6 +79,11 @@ evaluate-generated:
 evaluate-scib:
 	@scripts/run_evaluate_scib.sh $(CONFIG)
 
+## Reference-only trajectory metrics into results_dir/evaluation/{model}_trajectory_metrics.csv
+.PHONY: evaluate-trajectory
+evaluate-trajectory:
+	@scripts/run_evaluate_trajectory.sh $(CONFIG)
+
 ## Profile evaluate on a synthetic fixture (see scripts/benchmark_eval.py)
 .PHONY: benchmark-eval
 benchmark-eval:
